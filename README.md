@@ -35,4 +35,7 @@ hc wait "$t"
 - stdout is only the Herdr subagent's terminal id; progress and a summary with
   the next `hc` commands go to stderr.
 
+- An existing branch, worktree path or live hc name is never reused: `run`
+  exits 5 before creating anything. Pick another name and retry.
+
 See `herdr-subagent help run` for every flag and exit code.

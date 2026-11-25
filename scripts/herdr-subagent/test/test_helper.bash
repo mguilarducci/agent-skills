@@ -15,8 +15,19 @@ setup_sandbox() {
 
 	# hc stub: records each argv element in its own file (arg.1, arg.2, ...),
 	# prints $HC_STUB_OUTPUT and exits with $HC_STUB_EXIT.
+	# `hc ls` is answered from $HC_STUB_LS (default: no terminals) and only
+	# counted in $HC_LOG/ls-calls, so it never clobbers the `hc run` argv.
 	cat >"$STUBS/hc" <<'STUB'
 #!/bin/bash
+if [ "${1:-}" = "ls" ]; then
+	printf '%s\n' "$*" >>"$HC_LOG/ls-calls"
+	if [ -n "${HC_STUB_LS+x}" ]; then
+		printf '%s\n' "$HC_STUB_LS"
+	else
+		printf '%s\n' '{"terminals":[]}'
+	fi
+	exit "${HC_STUB_LS_EXIT:-0}"
+fi
 n=0
 for a in "$@"; do
 	n=$((n + 1))
