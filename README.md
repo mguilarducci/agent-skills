@@ -57,6 +57,19 @@ hc wait "$t"
 - `--json`: stdout is one JSON object instead,
   `{"terminal","name","branch","base","worktree","harness","model"}`, with
   `model` set to `null` when `--model` is left out.
+- `-n`, `--dry-run`: runs nothing that changes state, not even `git fetch`,
+  and prints the plan on stdout instead: one shell-quoted command per line
+  (the Base update, `git worktree add` and the full `hc run`), each ready to
+  paste into a shell. Arguments, prerequisites and name conflicts are still
+  checked (exits 2, 4 and 5); otherwise it exits 0. The Base update lines are
+  worked out from local state: they show the step `run` takes if the fetch
+  brings new commits to `origin/main`, and known causes of an exit-3 abort
+  are noted on stderr. With `--json`, the object has `"terminal": null` and a
+  `"commands"` array of those lines:
+
+  ```sh
+  herdr-subagent run --dry-run --json --branch fix/ci -- "Fix CI"
+  ```
 
 - An existing branch, worktree path or live hc name is never reused: `run`
   exits 5 before creating anything. Pick another name and retry.

@@ -49,6 +49,7 @@ Examples:
   $PROG run --base develop --branch fix/parser -- "Fix the v1.2 parser"
   $PROG run --branch=issue-6 -- "Implement issue #6"
   $PROG run --harness codex --effort high --branch fix/ci -- "Fix CI"
+  $PROG run --dry-run --json --branch fix/ci -- "Fix CI"
   $PROG run --branch fix/docs --task-file - <<'EOF'
   Fix the "quoted" \$HOME and \`backtick\` bits in the docs.
   EOF
@@ -74,6 +75,11 @@ Flags:
   --json            Print one JSON object on stdout instead of the id:
                     {"terminal","name","branch","base","worktree",
                     "harness","model"}; model is null without --model.
+  -n, --dry-run     Run nothing that changes state (not even git fetch);
+                    print the plan on stdout, one shell-quoted command per
+                    line, and exit 0. Arguments, prerequisites and names
+                    are still checked (exits 2, 4, 5). With --json, the
+                    object has "terminal":null and "commands":[...].
   -h, --help        Show this help.
 
 Flags take \`--flag value\` or \`--flag=value\`, in any order before \`--\`.
@@ -89,6 +95,10 @@ in. A main that is not checked out anywhere is fast-forwarded as a ref; any
 other Base must be checked out somewhere. It never auto-resolves: dirty
 changes, a diverged main, a conflicting merge, a failed fetch or no origin
 abort with exit 3 and leave git as it was.
+
+In a dry run the Base update lines come from local state only: they show
+the step run takes if the fetch brings new commits to origin/main (run
+skips it if not). Known causes of an exit-3 abort are noted on stderr.
 
 Exit codes:
   0    launched
@@ -295,6 +305,32 @@ base_update() {
 	fi
 }
 
+# The Base update as shell lines, for --dry-run. Reads only local state:
+# whether origin/main has new commits is unknown without the fetch, so the
+# plan shows the step run would take if it does (if not, run skips it).
+# What would make run abort with exit 3 and is already known is noted on
+# stderr; dirt and conflicts are only knowable at run time.
+base_update_plan() {
+	local base="$1" wt
+	git remote get-url origin >/dev/null 2>&1 ||
+		say "dry run: no origin remote; run would abort the Base update (exit 3)"
+	shell_line git fetch -q origin
+	wt="$(worktree_with_branch "$base")"
+	if [ "$base" = "main" ]; then
+		if [ -n "$wt" ]; then
+			shell_line git -C "$wt" merge -q --ff-only origin/main
+		else
+			# The old value is main as it is now, as in run.
+			shell_line git update-ref -m "$PROG: Base update" refs/heads/main \
+				refs/remotes/origin/main "$(git rev-parse refs/heads/main)"
+		fi
+	elif [ -n "$wt" ]; then
+		shell_line git -C "$wt" merge -q --no-edit origin/main
+	else
+		say "dry run: $base is not checked out in any worktree; run would abort the Base update (exit 3) unless $base already has origin/main"
+	fi
+}
+
 # --- json --------------------------------------------------------------------
 
 # Prints $1 as a quoted JSON string: escapes \ and ", and every control char.
@@ -320,6 +356,35 @@ json_str() {
 	printf '"%s"' "$s"
 }
 
+# --- dry run -----------------------------------------------------------------
+
+# Prints $1 quoted for a POSIX-ish shell (bash, zsh): bare when safe, in
+# single quotes otherwise, and as $'...' when it holds a control char (such as
+# a newline), so every command stays on one line.
+shquote() {
+	local s="$1" esc="'\\''"
+	# grep under LC_ALL=C matches bytes, so non-ASCII is always quoted.
+	if [ -n "$s" ] && ! printf '%s' "$s" | LC_ALL=C grep -q '[^A-Za-z0-9_./:=@%+,-]'; then
+		printf '%s' "$s"
+		return 0
+	fi
+	case "$s" in
+	*[[:cntrl:]]*) printf '%q' "$s" ;;
+	*) printf "'%s'" "${s//\'/$esc}" ;;
+	esac
+}
+
+# Prints its arguments as one shell-quoted command line.
+shell_line() {
+	local a sep=""
+	for a in "$@"; do
+		printf '%s' "$sep"
+		shquote "$a"
+		sep=" "
+	done
+	printf '\n'
+}
+
 # --- task file -------------------------------------------------------------
 
 # Sets $task from a file, or from stdin for "-". Trailing newlines are dropped
@@ -337,7 +402,7 @@ read_task_file() {
 cmd_run() {
 	local base="main" branch="" task="" have_task=0 update_base=1 arg
 	local harness="claude" model="" effort="" have_model=0 have_effort=0
-	local task_file="" have_task_file=0 json=0
+	local task_file="" have_task_file=0 json=0 dry_run=0
 
 	while [ "$#" -gt 0 ]; do
 		arg="$1"
@@ -360,6 +425,7 @@ cmd_run() {
 			have_task_file=1
 			;;
 		--json) json=1 ;;
+		-n | --dry-run) dry_run=1 ;;
 		--model=*)
 			model="${arg#--model=}"
 			have_model=1
@@ -444,23 +510,6 @@ cmd_run() {
 	refuse_taken_names "$branch" "$wt_path" "$hc_name"
 	warn_if_worktrees_not_ignored "$root"
 
-	# After the name-conflict checks; Ctrl-C leaves git as git leaves it.
-	if [ "$update_base" -eq 1 ]; then
-		trap on_interrupt INT
-		base_update "$base"
-	fi
-
-	# Work starts here: from now on, failures may leave things behind.
-	WT_PATH="$wt_path"
-	BRANCH="$branch"
-	if git show-ref --verify --quiet "refs/heads/$branch"; then BRANCH_EXISTED=1; else BRANCH_EXISTED=0; fi
-	if [ -e "$wt_path" ]; then PATH_EXISTED=1; else PATH_EXISTED=0; fi
-	trap on_interrupt INT
-
-	say "creating worktree $wt_path on new branch $branch from $base"
-	git worktree add -b "$branch" "$wt_path" "$base" >&2 ||
-		fail_after_start "git worktree add failed"
-
 	local text
 	text="$(printf '%s\n\n%s\n%s\n%s' "$task" \
 		"Work only in this worktree ($wt_path, branch $branch). Do not start other agents." \
@@ -478,6 +527,39 @@ cmd_run() {
 		[ "$have_model" -eq 0 ] || cmd+=(--model "$model")
 		[ "$have_effort" -eq 0 ] || cmd+=(--effort "$effort")
 	fi
+
+	if [ "$dry_run" -eq 1 ]; then
+		local plan
+		plan="$(
+			[ "$update_base" -eq 0 ] || base_update_plan "$base"
+			shell_line git worktree add -b "$branch" "$wt_path" "$base"
+			shell_line hc run --bg --name "$hc_name" --cwd "$wt_path" "${cmd[@]}" -- "$text"
+		)"
+		if [ "$json" -eq 1 ]; then
+			print_json null "$hc_name" "$branch" "$base" "$wt_path" "$harness" "$have_model" "$model" "$plan"
+		else
+			printf '%s\n' "$plan"
+		fi
+		print_summary "<terminal>" "$hc_name" "$wt_path" "$branch" "$base" "$root" "$harness" 1
+		exit 0
+	fi
+
+	# After the name-conflict checks; Ctrl-C leaves git as git leaves it.
+	if [ "$update_base" -eq 1 ]; then
+		trap on_interrupt INT
+		base_update "$base"
+	fi
+
+	# Work starts here: from now on, failures may leave things behind.
+	WT_PATH="$wt_path"
+	BRANCH="$branch"
+	if git show-ref --verify --quiet "refs/heads/$branch"; then BRANCH_EXISTED=1; else BRANCH_EXISTED=0; fi
+	if [ -e "$wt_path" ]; then PATH_EXISTED=1; else PATH_EXISTED=0; fi
+	trap on_interrupt INT
+
+	say "creating worktree $wt_path on new branch $branch from $base"
+	git worktree add -b "$branch" "$wt_path" "$base" >&2 ||
+		fail_after_start "git worktree add failed"
 
 	say "starting $harness as $hc_name"
 	local out
@@ -497,22 +579,44 @@ cmd_run() {
 
 	trap - INT
 	if [ "$json" -eq 1 ]; then
-		local model_json="null"
-		[ "$have_model" -eq 0 ] || model_json="$(json_str "$model")"
-		printf '{"terminal":%s,"name":%s,"branch":%s,"base":%s,"worktree":%s,"harness":%s,"model":%s}\n' \
-			"$(json_str "$t")" "$(json_str "$hc_name")" "$(json_str "$branch")" \
-			"$(json_str "$base")" "$(json_str "$wt_path")" "$(json_str "$harness")" "$model_json"
+		print_json "$(json_str "$t")" "$hc_name" "$branch" "$base" "$wt_path" "$harness" "$have_model" "$model"
 	else
 		printf '%s\n' "$t"
 	fi
-	print_summary "$t" "$hc_name" "$wt_path" "$branch" "$base" "$root" "$harness"
+	print_summary "$t" "$hc_name" "$wt_path" "$branch" "$base" "$root" "$harness" 0
+}
+
+# Prints the --json object. $1 is the terminal as JSON (a string or null);
+# a 9th argument, the dry-run plan (one command per line), adds "commands".
+print_json() {
+	local terminal_json="$1" name="$2" branch="$3" base="$4" wt_path="$5"
+	local harness="$6" have_model="$7" model="$8" model_json="null" commands=""
+	[ "$have_model" -eq 0 ] || model_json="$(json_str "$model")"
+	if [ "$#" -ge 9 ]; then
+		local line sep=""
+		commands=',"commands":['
+		while IFS= read -r line; do
+			commands="$commands$sep$(json_str "$line")"
+			sep=","
+		done <<EOF
+$9
+EOF
+		commands="$commands]"
+	fi
+	printf '{"terminal":%s,"name":%s,"branch":%s,"base":%s,"worktree":%s,"harness":%s,"model":%s%s}\n' \
+		"$terminal_json" "$(json_str "$name")" "$(json_str "$branch")" \
+		"$(json_str "$base")" "$(json_str "$wt_path")" "$(json_str "$harness")" "$model_json" "$commands"
 }
 
 print_summary() {
-	local t="$1" name="$2" wt_path="$3" branch="$4" base="$5" root="$6" harness="$7"
+	local t="$1" name="$2" wt_path="$3" branch="$4" base="$5" root="$6" harness="$7" dry_run="$8"
 	{
 		printf '\n'
-		say "started Herdr subagent $t ($name)"
+		if [ "$dry_run" -eq 1 ]; then
+			say "dry run: nothing was run; the commands above would start Herdr subagent $t ($name)"
+		else
+			say "started Herdr subagent $t ($name)"
+		fi
 		printf '  worktree: %s\n' "$wt_path"
 		printf '  branch:   %s (new, from %s)\n' "$branch" "$base"
 		printf '\nNext:\n'
