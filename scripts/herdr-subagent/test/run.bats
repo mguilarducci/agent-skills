@@ -114,6 +114,26 @@ EOF
 	[ "$(hc_arg 6)" = "$REPO/.worktrees/nested" ]
 }
 
+@test "a repo with a separate git dir gets its worktrees under the main checkout" {
+	git clone -q --separate-git-dir "$SANDBOX/sep.git" "$SANDBOX/origin.git" "$SANDBOX/sep" 2>/dev/null
+	cd "$SANDBOX/sep"
+	run --separate-stderr "$SCRIPT" run --branch b -- "task"
+	[ "$status" -eq 0 ]
+	[ -d "$SANDBOX/sep/.worktrees/b" ]
+	[ ! -e "$SANDBOX/.worktrees" ]
+
+	# git keeps no record of where that main checkout is, so from a linked
+	# worktree the script refuses rather than guess or nest.
+	git worktree add -q -b other "$SANDBOX/elsewhere" main
+	cd "$SANDBOX/elsewhere"
+	run --separate-stderr "$SCRIPT" run --branch c -- "task"
+	[ "$status" -eq 4 ]
+	[[ "$stderr" == *"run it from the main checkout"* ]] || false
+	[ ! -e "$SANDBOX/elsewhere/.worktrees" ]
+	[ ! -e "$SANDBOX/sep.git/.worktrees" ]
+	[ ! -e "$SANDBOX/sep/.worktrees/c" ]
+}
+
 @test "hc names match the branch ticket's table" {
 	check() {
 		rm -f "$HC_LOG"/*

@@ -200,6 +200,30 @@ refuse_taken_names() {
 	return 0
 }
 
+# Prints the main checkout's path, so worktrees never nest in a linked one.
+# In the main checkout that is its top level, wherever the git dir is
+# (`git init --separate-git-dir`). From a linked worktree it is the parent
+# of the common .git dir; a separate git dir keeps no record of its main
+# checkout (`git worktree list` shows the git dir), so that exits 4.
+# A bare repo has no main checkout: its worktrees go beside the git dir.
+main_checkout() {
+	local git_dir common top
+	git_dir="$(git rev-parse --path-format=absolute --git-dir)" ||
+		die 4 "cannot find the main checkout"
+	common="$(git rev-parse --path-format=absolute --git-common-dir)" ||
+		die 4 "cannot find the main checkout"
+	if [ "$(git --git-dir="$common" rev-parse --is-bare-repository)" = "true" ]; then
+		dirname "$common"
+	elif [ "$git_dir" = "$common" ]; then
+		top="$(git rev-parse --show-toplevel)" || die 4 "cannot find the main checkout"
+		printf '%s\n' "$top"
+	elif [ "$(basename "$common")" = ".git" ]; then
+		dirname "$common"
+	else
+		die 4 "cannot find the main checkout: $common is a separate git dir; run it from the main checkout"
+	fi
+}
+
 # Warns only: never writes .gitignore or .git/info/exclude.
 warn_if_worktrees_not_ignored() {
 	local root="$1"
@@ -550,10 +574,8 @@ cmd_run() {
 	git show-ref --verify --quiet "refs/heads/$base" ||
 		usage_error "--base must name an existing local branch: $base"
 
-	local common root
-	common="$(git rev-parse --path-format=absolute --git-common-dir)" ||
-		die 4 "cannot find the main checkout"
-	root="$(dirname "$common")"
+	local root
+	root="$(main_checkout)" || exit 4
 	local wt_path="$root/.worktrees/$slug"
 
 	refuse_taken_names "$branch" "$wt_path" "$hc_name"
