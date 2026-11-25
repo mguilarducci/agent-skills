@@ -37,6 +37,12 @@ hc wait "$t"
 - `--model <s>`, `--effort <s>`: passed to the harness as-is (Codex gets
   `-m <s>` and `-c model_reasoning_effort=<s>`). Left out, your harness config
   applies.
+- Base update: before creating the worktree, it fetches `origin` and brings
+  the base branch up to date with `origin/main`, in the worktree that has it
+  checked out (`main` is fast-forwarded; any other base gets `origin/main`
+  merged in). If that can't complete cleanly (uncommitted changes, a diverged
+  `main`, a conflicting merge, a failed fetch), it exits 3, changes nothing and
+  creates nothing. `--no-base-update` skips it.
 - stdout is only the Herdr subagent's terminal id; progress and a summary with
   the next `hc` commands go to stderr.
 

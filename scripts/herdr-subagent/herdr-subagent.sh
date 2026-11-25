@@ -61,6 +61,7 @@ Flags:
   --effort <s>      Passed as-is: claude --effort <s>,
                     codex -c model_reasoning_effort=<s>.
                     Left out, the harness's own config applies.
+  --no-base-update  Skip the Base update (see below).
   -h, --help        Show this help.
 
 Flags take \`--flag value\` or \`--flag=value\`, in any order before \`--\`.
@@ -69,10 +70,19 @@ The worktree goes to <main-checkout-root>/.worktrees/<slug(branch)>.
 stdout carries only the Herdr subagent's terminal id; progress, errors and
 the summary go to stderr.
 
+Base update: before creating the worktree, run fetches origin and brings
+the Base branch up to date with origin/main, in the worktree that has it
+checked out. main is fast-forwarded; any other Base gets origin/main merged
+in. A main that is not checked out anywhere is fast-forwarded as a ref; any
+other Base must be checked out somewhere. It never auto-resolves: dirty
+changes, a diverged main, a conflicting merge, a failed fetch or no origin
+abort with exit 3 and leave git as it was.
+
 Exit codes:
   0    launched
   1    git or hc failed after work started (leftovers are printed)
   2    usage error; nothing was created
+  3    the Base update could not complete cleanly; nothing was created
   4    missing git repo, hc, the chosen harness or \$HC_TERMINAL_ID;
        nothing was created
   5    branch, worktree path or hc name already exists; nothing was created:
@@ -208,10 +218,75 @@ on_interrupt() {
 	exit 130
 }
 
+# --- base update -------------------------------------------------------------
+
+# Abort the Base update: nothing was changed and nothing will be created.
+base_update_abort() {
+	say "Base update failed: $*"
+	say "nothing was created; fix it and rerun, or skip it with --no-base-update"
+	exit 3
+}
+
+# Path of the worktree that has refs/heads/$1 checked out, if any.
+worktree_with_branch() {
+	git worktree list --porcelain | awk -v ref="refs/heads/$1" '
+		/^worktree / { wt = substr($0, 10) }
+		$0 == "branch " ref { print wt; exit }
+	'
+}
+
+# Bring the Base branch up to date with origin/main. Main is fast-forwarded;
+# any other Base gets origin/main merged in. Never auto-resolves: anything
+# that is not clean aborts with exit 3 and leaves git as it was.
+base_update() {
+	local base="$1" wt
+	git remote get-url origin >/dev/null 2>&1 || base_update_abort "no origin remote"
+	say "Base update: fetching origin"
+	git fetch -q origin >&2 || base_update_abort "git fetch origin failed"
+	git rev-parse --verify -q refs/remotes/origin/main >/dev/null ||
+		base_update_abort "origin has no main branch"
+
+	if git merge-base --is-ancestor origin/main "refs/heads/$base"; then
+		say "Base update: $base already has origin/main"
+		return 0
+	fi
+
+	wt="$(worktree_with_branch "$base")"
+	# .worktrees/ holds earlier Herdr subagents' worktrees; it is not dirt.
+	if [ -n "$wt" ] && [ -n "$(git -C "$wt" status --porcelain --untracked-files=normal -- ':(top,exclude).worktrees')" ]; then
+		base_update_abort "$wt (where $base is checked out) has uncommitted or untracked changes"
+	fi
+
+	if [ "$base" = "main" ]; then
+		git merge-base --is-ancestor refs/heads/main origin/main ||
+			base_update_abort "main has diverged from origin/main (not a fast-forward)"
+		say "Base update: fast-forwarding main to origin/main"
+		if [ -n "$wt" ]; then
+			git -C "$wt" merge -q --ff-only origin/main >&2 ||
+				base_update_abort "git merge --ff-only origin/main failed in $wt"
+		else
+			git update-ref -m "$PROG: Base update" refs/heads/main \
+				"$(git rev-parse origin/main)" "$(git rev-parse refs/heads/main)" ||
+				base_update_abort "could not fast-forward main"
+		fi
+		return 0
+	fi
+
+	[ -n "$wt" ] ||
+		base_update_abort "$base is not checked out in any worktree, so origin/main cannot be merged into it"
+	git merge-tree --write-tree "refs/heads/$base" origin/main >/dev/null 2>&1 ||
+		base_update_abort "merging origin/main into $base would conflict"
+	say "Base update: merging origin/main into $base in $wt"
+	if ! git -C "$wt" merge -q --no-edit origin/main >&2; then
+		git -C "$wt" merge --abort >/dev/null 2>&1
+		base_update_abort "git merge origin/main failed in $wt"
+	fi
+}
+
 # --- run ---------------------------------------------------------------------
 
 cmd_run() {
-	local base="main" branch="" task="" have_task=0 arg
+	local base="main" branch="" task="" have_task=0 update_base=1 arg
 	local harness="claude" model="" effort="" have_model=0 have_effort=0
 
 	while [ "$#" -gt 0 ]; do
@@ -226,6 +301,7 @@ cmd_run() {
 			fi
 			break
 			;;
+		--no-base-update) update_base=0 ;;
 		--base=*) base="${arg#--base=}" ;;
 		--branch=*) branch="${arg#--branch=}" ;;
 		--harness=*) harness="${arg#--harness=}" ;;
@@ -302,6 +378,12 @@ cmd_run() {
 
 	refuse_taken_names "$branch" "$wt_path" "$hc_name"
 	warn_if_worktrees_not_ignored "$root"
+
+	# After the name-conflict checks; Ctrl-C leaves git as git leaves it.
+	if [ "$update_base" -eq 1 ]; then
+		trap on_interrupt INT
+		base_update "$base"
+	fi
 
 	# Work starts here: from now on, failures may leave things behind.
 	WT_PATH="$wt_path"
