@@ -108,7 +108,7 @@ undo_run() {
 	run --separate-stderr "$SCRIPT" run --dry-run --no-base-update --branch b -- "task"
 	[ "$status" -eq 0 ]
 	[ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" = "2" ]
-	[[ "${lines[0]}" == "git worktree add -b b $WT main" ]] || false
+	[[ "${lines[0]}" == "git worktree add -b b $WT refs/heads/main" ]] || false
 	[[ "${lines[1]}" == "hc run --bg --name b --cwd $WT claude -- "* ]] || false
 }
 
@@ -130,7 +130,7 @@ undo_run() {
 	[ "$status" -eq 0 ]
 	[ "${lines[0]}" = "git fetch -q origin" ]
 	[ "${lines[1]}" = "git -C $REPO merge -q --no-edit origin/main" ]
-	[ "${lines[2]}" = "git worktree add -b b $WT develop" ]
+	[ "${lines[2]}" = "git worktree add -b b $WT refs/heads/develop" ]
 }
 
 @test "a Base update run would abort on, and that is known without fetching, is noted on stderr" {
@@ -138,7 +138,7 @@ undo_run() {
 	run --separate-stderr "$SCRIPT" run --dry-run --base develop --branch b -- "task"
 	[ "$status" -eq 0 ]
 	[ "${lines[0]}" = "git fetch -q origin" ]
-	[ "${lines[1]}" = "git worktree add -b b $WT develop" ]
+	[ "${lines[1]}" = "git worktree add -b b $WT refs/heads/develop" ]
 	[[ "$stderr" == *"develop is not checked out in any worktree"*"exit 3"* ]] || false
 	[[ "$stderr" != *"unless"* ]] || false
 
@@ -163,7 +163,7 @@ undo_run() {
 	[ "$(printf '%s' "$output" | jq -r '.name, .branch, .base, .harness')" = "$(printf 'b\nb\nmain\nclaude')" ]
 	[ "$(printf '%s' "$output" | jq -r '.worktree')" = "$WT" ]
 	[ "$(printf '%s' "$output" | jq -r '.commands | length')" = "4" ]
-	[ "$(printf '%s' "$output" | jq -r '.commands[2]')" = "git worktree add -b b $WT main" ]
+	[ "$(printf '%s' "$output" | jq -r '.commands[2]')" = "git worktree add -b b $WT refs/heads/main" ]
 
 	json="$output"
 	run --separate-stderr "$SCRIPT" run --dry-run --branch b -- "$(printf 'two\nlines')"

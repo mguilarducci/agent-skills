@@ -561,7 +561,7 @@ cmd_run() {
 		local plan
 		plan="$(
 			[ "$update_base" -eq 0 ] || base_update_plan "$base"
-			shell_line git worktree add -b "$branch" "$wt_path" "$base"
+			shell_line git worktree add -b "$branch" "$wt_path" "refs/heads/$base"
 			shell_line hc run --bg --name "$hc_name" --cwd "$wt_path" "${cmd[@]}" -- "$prompt"
 		)"
 		if [ "$json" -eq 1 ]; then
@@ -587,7 +587,7 @@ cmd_run() {
 	trap on_interrupt INT
 
 	say "creating worktree $wt_path on new branch $branch from $base"
-	git worktree add -b "$branch" "$wt_path" "$base" >&2 ||
+	git worktree add -b "$branch" "$wt_path" "refs/heads/$base" >&2 ||
 		fail_after_start "git worktree add failed"
 
 	say "starting $harness as $hc_name"

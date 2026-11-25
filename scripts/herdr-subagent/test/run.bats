@@ -94,6 +94,16 @@ EOF
 	[ "$(git -C "$REPO/.worktrees/b" rev-parse HEAD)" = "$(git rev-parse develop)" ]
 }
 
+@test "--base starts from the branch even when a tag has the same name" {
+	git checkout -q -b develop
+	git commit -q --allow-empty -m dev
+	git tag develop main
+	git checkout -q main
+	run --separate-stderr "$SCRIPT" run --no-base-update --base develop --branch b -- "task"
+	[ "$status" -eq 0 ]
+	[ "$(git -C "$REPO/.worktrees/b" rev-parse HEAD)" = "$(git rev-parse refs/heads/develop)" ]
+}
+
 @test "run from a linked worktree still lands under the main checkout" {
 	git worktree add -q -b other "$SANDBOX/elsewhere" main
 	cd "$SANDBOX/elsewhere"
