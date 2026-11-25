@@ -166,7 +166,7 @@ hc_name_for() {
 
 # --- conflicts ---------------------------------------------------------------
 
-taken() {
+exit_name_taken() {
 	say "already exists: $1"
 	say "pick another --branch and retry"
 	exit 5
@@ -177,20 +177,20 @@ taken() {
 refuse_taken_names() {
 	local branch="$1" wt_path="$2" hc_name="$3"
 	git show-ref --verify --quiet "refs/heads/$branch" &&
-		taken "local branch $branch"
+		exit_name_taken "local branch $branch"
 	# Only what is already known locally: no fetch just for this check.
 	git show-ref --verify --quiet "refs/remotes/origin/$branch" &&
-		taken "remote branch origin/$branch"
+		exit_name_taken "remote branch origin/$branch"
 	# Also catches two branches with the same slug (feat/x, feat-x).
 	if [ -e "$wt_path" ] || [ -L "$wt_path" ]; then
-		taken "worktree path $wt_path"
+		exit_name_taken "worktree path $wt_path"
 	fi
 	# `hc run --name` must be unique among live terminals (plain `hc ls`).
 	local live
 	live="$(hc ls --json)" || die 4 "hc ls failed, so hc is not usable; nothing was created"
 	if printf '%s\n' "$live" | grep -o '"name"[[:space:]]*:[[:space:]]*"[^"]*"' |
 		sed 's/.*"\([^"]*\)"$/\1/' | grep -qxF -- "$hc_name"; then
-		taken "live hc terminal named $hc_name"
+		exit_name_taken "live hc terminal named $hc_name"
 	fi
 	return 0
 }
@@ -424,6 +424,7 @@ cmd_run() {
 	local base="main" branch="" task="" have_task=0 update_base=1 arg
 	local harness="claude" model="" effort="" have_model=0 have_effort=0
 	local task_file="" have_task_file=0 json=0 dry_run=0
+	local flag value
 
 	while [ "$#" -gt 0 ]; do
 		arg="$1"
@@ -438,45 +439,42 @@ cmd_run() {
 			break
 			;;
 		--no-base-update) update_base=0 ;;
-		--base=*) base="${arg#--base=}" ;;
-		--branch=*) branch="${arg#--branch=}" ;;
-		--harness=*) harness="${arg#--harness=}" ;;
-		--task-file=*)
-			task_file="${arg#--task-file=}"
-			have_task_file=1
-			;;
 		--json) json=1 ;;
 		-n | --dry-run) dry_run=1 ;;
-		--model=*)
-			model="${arg#--model=}"
-			have_model=1
-			;;
-		--effort=*)
-			effort="${arg#--effort=}"
-			have_effort=1
-			;;
-		--base | --branch | --harness | --model | --effort | --task-file)
-			if [ "$#" -lt 2 ] || [ "$2" = "--" ]; then
-				usage_error "$arg needs a value"
-			fi
+		--base | --branch | --harness | --model | --effort | --task-file | \
+			--base=* | --branch=* | --harness=* | --model=* | --effort=* | --task-file=*)
+			# --flag=value and --flag value both end up as $flag and $value.
 			case "$arg" in
-			--base) base="$2" ;;
-			--branch) branch="$2" ;;
-			--harness) harness="$2" ;;
+			*=*)
+				flag="${arg%%=*}"
+				value="${arg#*=}"
+				;;
+			*)
+				if [ "$#" -lt 2 ] || [ "$2" = "--" ]; then
+					usage_error "$arg needs a value"
+				fi
+				flag="$arg"
+				value="$2"
+				shift
+				;;
+			esac
+			case "$flag" in
+			--base) base="$value" ;;
+			--branch) branch="$value" ;;
+			--harness) harness="$value" ;;
 			--task-file)
-				task_file="$2"
+				task_file="$value"
 				have_task_file=1
 				;;
 			--model)
-				model="$2"
+				model="$value"
 				have_model=1
 				;;
 			--effort)
-				effort="$2"
+				effort="$value"
 				have_effort=1
 				;;
 			esac
-			shift
 			;;
 		-*) usage_error "unknown flag: $arg" ;;
 		*) usage_error "unexpected argument: $arg (put the task after --)" ;;
@@ -487,7 +485,6 @@ cmd_run() {
 	if [ "$have_task_file" -eq 1 ]; then
 		[ "$have_task" -eq 0 ] || usage_error "give the task either after -- or with --task-file, not both"
 		read_task_file "$task_file"
-		[ -n "$task" ] || usage_error "empty task in --task-file: $task_file"
 	fi
 	[ "$have_task" -eq 1 ] || [ "$have_task_file" -eq 1 ] || usage_error "missing task"
 	[ -n "$task" ] || usage_error "missing task"
@@ -531,8 +528,8 @@ cmd_run() {
 	refuse_taken_names "$branch" "$wt_path" "$hc_name"
 	warn_if_worktrees_not_ignored "$root"
 
-	local text
-	text="$(printf '%s\n\n%s\n%s\n%s' "$task" \
+	local prompt
+	prompt="$(printf '%s\n\n%s\n%s\n%s' "$task" \
 		"Work only in this worktree ($wt_path, branch $branch). Do not start other agents." \
 		"Report with hc send $parent_id \"<result or blocker>\" when done or stuck, not just to acknowledge." \
 		"Write long answers to a file and send its path.")"
@@ -554,7 +551,7 @@ cmd_run() {
 		plan="$(
 			[ "$update_base" -eq 0 ] || base_update_plan "$base"
 			shell_line git worktree add -b "$branch" "$wt_path" "$base"
-			shell_line hc run --bg --name "$hc_name" --cwd "$wt_path" "${cmd[@]}" -- "$text"
+			shell_line hc run --bg --name "$hc_name" --cwd "$wt_path" "${cmd[@]}" -- "$prompt"
 		)"
 		if [ "$json" -eq 1 ]; then
 			print_json null "$hc_name" "$branch" "$base" "$wt_path" "$harness" "$have_model" "$model" "$plan"
@@ -583,28 +580,28 @@ cmd_run() {
 		fail_after_start "git worktree add failed"
 
 	say "starting $harness as $hc_name"
-	local out
-	out="$(hc run --bg --name "$hc_name" --cwd "$wt_path" "${cmd[@]}" -- "$text")" ||
+	local hc_output
+	hc_output="$(hc run --bg --name "$hc_name" --cwd "$wt_path" "${cmd[@]}" -- "$prompt")" ||
 		fail_after_start "hc run failed"
 
 	# Piped, hc prints JSON; take its "address". Fall back to a bare id.
-	local t
-	t="$(printf '%s\n' "$out" | sed -n 's/.*"address"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
-	if [ -z "$t" ]; then
-		case "$out" in
+	local terminal
+	terminal="$(printf '%s\n' "$hc_output" | sed -n 's/.*"address"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+	if [ -z "$terminal" ]; then
+		case "$hc_output" in
 		*[!A-Za-z0-9/_-]* | "") ;;
-		*) t="$out" ;;
+		*) terminal="$hc_output" ;;
 		esac
 	fi
-	[ -n "$t" ] || fail_after_start "could not read the terminal id from hc run: $out"
+	[ -n "$terminal" ] || fail_after_start "could not read the terminal id from hc run: $hc_output"
 
 	trap - INT
 	if [ "$json" -eq 1 ]; then
-		print_json "$(json_str "$t")" "$hc_name" "$branch" "$base" "$wt_path" "$harness" "$have_model" "$model"
+		print_json "$(json_str "$terminal")" "$hc_name" "$branch" "$base" "$wt_path" "$harness" "$have_model" "$model"
 	else
-		printf '%s\n' "$t"
+		printf '%s\n' "$terminal"
 	fi
-	print_summary "$t" "$hc_name" "$wt_path" "$branch" "$base" "$root" "$harness" 0
+	print_summary "$terminal" "$hc_name" "$wt_path" "$branch" "$base" "$root" "$harness" 0
 }
 
 # Prints the --json object. $1 is the terminal as JSON (a string or null);
@@ -630,25 +627,25 @@ EOF
 }
 
 print_summary() {
-	local t="$1" name="$2" wt_path="$3" branch="$4" base="$5" root="$6" harness="$7" dry_run="$8"
+	local terminal="$1" name="$2" wt_path="$3" branch="$4" base="$5" root="$6" harness="$7" dry_run="$8"
 	{
 		printf '\n'
 		if [ "$dry_run" -eq 1 ]; then
-			say "dry run: nothing was run; the commands above would start Herdr subagent $t ($name)"
+			say "dry run: nothing was run; the commands above would start Herdr subagent $terminal ($name)"
 		else
-			say "started Herdr subagent $t ($name)"
+			say "started Herdr subagent $terminal ($name)"
 		fi
 		printf '  worktree: %s\n' "$wt_path"
 		printf '  branch:   %s (new, from %s)\n' "$branch" "$base"
 		printf '\nNext:\n'
-		printf '  hc read %s\n' "$t"
-		printf '  hc send %s "<message>"\n' "$t"
-		printf '  hc wait %s\n' "$t"
-		printf '  hc kill %s\n' "$t"
+		printf '  hc read %s\n' "$terminal"
+		printf '  hc send %s "<message>"\n' "$terminal"
+		printf '  hc wait %s\n' "$terminal"
+		printf '  hc kill %s\n' "$terminal"
 		printf '\n'
 	} >&2
 	if [ "$harness" = "codex" ]; then
-		print_codex_warning "$t" >&2
+		print_codex_warning "$terminal" >&2
 	else
 		print_claude_warning "$root" >&2
 	fi
@@ -670,17 +667,17 @@ print_claude_warning() {
 	# shellcheck disable=SC2088
 	local user="~/.claude/settings.json"
 	local proj="$root/.claude/settings.json"
-	local local_="$root/.claude/settings.local.json"
+	local local_settings="$root/.claude/settings.local.json"
 	local w=${#user}
 	[ "${#proj}" -le "$w" ] || w=${#proj}
-	[ "${#local_}" -le "$w" ] || w=${#local_}
+	[ "${#local_settings}" -le "$w" ] || w=${#local_settings}
 
 	{
 		# shellcheck disable=SC2016 # literal backticks
 		printf '%s\n' 'Claude may ask before each `hc send`. To allow it for good, add "Bash(hc send:*)" to permissions.allow in one of:'
 		printf '  %-*s   (user: every project)\n' "$w" "$user"
 		printf '  %-*s   (project: shared, committed)\n' "$w" "$proj"
-		printf '  %-*s   (project: only you, not committed)\n' "$w" "$local_"
+		printf '  %-*s   (project: only you, not committed)\n' "$w" "$local_settings"
 	} >&2
 }
 
