@@ -384,15 +384,19 @@ json_str() {
 # a newline), so every command stays on one line.
 shquote() {
 	local s="$1" esc="'\\''"
+	# First: grep checks line by line, so a newline would look safe to it.
+	case "$s" in
+	*[[:cntrl:]]*)
+		printf '%q' "$s"
+		return 0
+		;;
+	esac
 	# grep under LC_ALL=C matches bytes, so non-ASCII is always quoted.
 	if [ -n "$s" ] && ! printf '%s' "$s" | LC_ALL=C grep -q '[^A-Za-z0-9_./:=@%+,-]'; then
 		printf '%s' "$s"
-		return 0
+	else
+		printf "'%s'" "${s//\'/$esc}"
 	fi
-	case "$s" in
-	*[[:cntrl:]]*) printf '%q' "$s" ;;
-	*) printf "'%s'" "${s//\'/$esc}" ;;
-	esac
 }
 
 # Prints its arguments as one shell-quoted command line.

@@ -70,6 +70,14 @@ undo_run() {
 	[ "$(hc_argv)" = "$pasted" ]
 }
 
+@test "a --model with a newline but otherwise safe characters stays on one line" {
+	run --separate-stderr "$SCRIPT" run --dry-run --no-base-update --model "$(printf 'a\nb')" --branch b -- "task"
+	[ "$status" -eq 0 ]
+	[ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" = "2" ]
+	paste_lines "$output"
+	[ "$(hc_arg 9)" = "$(printf 'a\nb')" ]
+}
+
 @test "--dry-run still exits 2 on bad arguments, 4 on missing prerequisites and 5 on taken names" {
 	run --separate-stderr "$SCRIPT" run --dry-run -- "task"
 	[ "$status" -eq 2 ]
