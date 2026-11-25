@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# herdr-subagent: launch a Claude Herdr subagent in its own worktree.
+# herdr-subagent: launch a Herdr subagent (Claude Code or Codex) in its own worktree.
 #
 # Runs on macOS's stock bash 3.2: no associative arrays, no ${x,,}.
 # Needs only git, hc and claude (or codex) at runtime.
@@ -14,7 +14,7 @@ ISSUES_URL="https://github.com/mguilarducci/agent-skills/issues"
 
 print_main_help() {
 	cat <<EOF
-$PROG - launch a Claude Herdr subagent in its own worktree
+$PROG - launch a Herdr subagent in its own worktree
 
 Examples:
   t=\$($PROG run --branch feat/login -- "Add OAuth login")
@@ -27,7 +27,7 @@ Usage:
   $PROG --version
 
 Commands:
-  run    Create a worktree on a new branch and start Claude in it through hc
+  run    Create a worktree on a new branch and start the Harness in it through hc
   help   Show this help; \`help run\` shows the run flags
 
 Flags:
@@ -42,7 +42,7 @@ EOF
 # shellcheck disable=SC1039
 print_run_help() {
 	cat <<EOF
-$PROG run - start a Claude Herdr subagent in a new worktree
+$PROG run - start a Herdr subagent in a new worktree
 
 Examples:
   t=\$($PROG run --branch feat/login -- "Add OAuth login")
@@ -61,9 +61,10 @@ Usage:
 Flags:
   --branch <name>   New branch for the worktree (required).
                     ASCII letters, digits and . _ / - only.
-  --base <branch>   Existing local branch to start from (default: main).
+  --base <branch>   Base branch: an existing local branch to start from
+                    (default: main).
   --harness <claude|codex>
-                    Agent to start (default: claude).
+                    Harness: the agent program to start (default: claude).
   --model <s>       Passed as-is: claude --model <s>, codex -m <s>.
   --effort <s>      Passed as-is: claude --effort <s>,
                     codex -c model_reasoning_effort=<s>.
@@ -71,7 +72,9 @@ Flags:
   --no-base-update  Skip the Base update (see below).
   --task-file <path|->
                     Read the task from a file, or from stdin with -,
-                    instead of after --. Trailing newlines are dropped.
+                    instead of after --. The task is passed byte-for-byte,
+                    trailing newlines included; an empty or
+                    whitespace-only task exits 2.
   --json            Print one JSON object on stdout instead of the id:
                     {"terminal","name","branch","base","worktree",
                     "harness","model"}; model is null without --model.
@@ -90,11 +93,13 @@ object); progress, errors and the summary go to stderr.
 
 Base update: before creating the worktree, run fetches origin and brings
 the Base branch up to date with origin/main, in the worktree that has it
-checked out. main is fast-forwarded; any other Base gets origin/main merged
-in. A main that is not checked out anywhere is fast-forwarded as a ref; any
-other Base must be checked out somewhere. It never auto-resolves: dirty
-changes, a diverged main, a conflicting merge, a failed fetch or no origin
-abort with exit 3 and leave git as it was.
+checked out. main is fast-forwarded; any other Base branch gets origin/main
+merged in. A main that is not checked out anywhere is fast-forwarded as a
+ref. It never auto-resolves: these abort with exit 3 and leave git as it
+was, even when the Base branch already has origin/main: uncommitted or
+untracked changes where the Base branch is checked out, or a Base branch
+other than main checked out nowhere. So do a diverged main, a conflicting
+merge, a failed fetch or no origin.
 
 In a dry run the Base update lines come from local state only: they show
 the step run takes if the fetch brings new commits to origin/main (run
@@ -105,8 +110,8 @@ Exit codes:
   1    git or hc failed after work started (leftovers are printed)
   2    usage error; nothing was created
   3    the Base update could not complete cleanly; nothing was created
-  4    missing git repo, hc, the chosen harness or \$HC_TERMINAL_ID;
-       nothing was created
+  4    missing git repo, hc (or a failing hc ls), the chosen Harness or
+       \$HC_TERMINAL_ID; nothing was created
   5    branch, worktree path or hc name already exists; nothing was created:
        pick another name and retry (an existing branch is never reused)
   130  interrupted
