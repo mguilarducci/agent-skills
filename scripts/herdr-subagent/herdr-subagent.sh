@@ -346,9 +346,12 @@ base_update_plan() {
 	case "$BASE_STEP" in
 	ff-worktree) shell_line git -C "$BASE_WT" merge -q --ff-only origin/main ;;
 	ff-ref)
-		# The old value is main as it is now, as in run.
-		shell_line git update-ref -m "$PROG: Base update" refs/heads/main \
-			refs/remotes/origin/main "$(git rev-parse refs/heads/main)"
+		# One line, guarded as in run: only a fast-forward moves main, and the
+		# old value is main as it is now.
+		printf '%s && %s\n' \
+			"$(shell_line git merge-base --is-ancestor refs/heads/main refs/remotes/origin/main)" \
+			"$(shell_line git update-ref -m "$PROG: Base update" refs/heads/main \
+				refs/remotes/origin/main "$(git rev-parse refs/heads/main)")"
 		;;
 	merge) shell_line git -C "$BASE_WT" merge -q --no-edit origin/main ;;
 	esac

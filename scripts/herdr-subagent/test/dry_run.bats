@@ -119,9 +119,25 @@ undo_run() {
 	run --separate-stderr "$SCRIPT" run --dry-run --branch b -- "task"
 	[ "$status" -eq 0 ]
 	[ "${lines[0]}" = "git fetch -q origin" ]
-	[ "${lines[1]}" = "git update-ref -m 'herdr-subagent: Base update' refs/heads/main refs/remotes/origin/main $old" ]
+	[ "${lines[1]}" = "git merge-base --is-ancestor refs/heads/main refs/remotes/origin/main && git update-ref -m 'herdr-subagent: Base update' refs/heads/main refs/remotes/origin/main $old" ]
 	paste_lines "$(printf '%s\n' "${lines[0]}" "${lines[1]}")"
 	[ "$(git -C "$REPO" rev-parse main)" = "$(git -C "$REPO" rev-parse origin/main)" ]
+}
+
+@test "the pasted ref update never moves a main checked out nowhere backward" {
+	ahead() {
+		run --separate-stderr "$SCRIPT" run --dry-run --branch b -- "task"
+		[ "$status" -eq 0 ]
+		(cd "$REPO" && /bin/bash -c "${lines[0]}" && /bin/bash -c "${lines[1]}") || true
+		[ "$(git -C "$REPO" rev-parse main)" = "$1" ]
+	}
+	# main ahead of origin/main
+	git -C "$REPO" commit -q --allow-empty -m local
+	git -C "$REPO" checkout -q --detach
+	ahead "$(git -C "$REPO" rev-parse main)"
+	# main diverged from origin/main
+	advance_origin_main
+	ahead "$(git -C "$REPO" rev-parse main)"
 }
 
 @test "another Base is planned as a merge in the worktree that has it checked out" {
