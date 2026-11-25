@@ -24,5 +24,5 @@ The branch a Herdr subagent's worktree is created from; `main` unless another is
 _Avoid_: Source branch, parent branch
 
 **Base update**:
-Bringing the base branch up to date with its remote before a Herdr subagent's worktree is created from it.
+Bringing the base branch up to date with `origin/main` before a Herdr subagent's worktree is created from it: `main` is fast-forwarded to `origin/main`, and any other base branch gets `origin/main` merged in.
 _Avoid_: Sync, refresh, step 0
