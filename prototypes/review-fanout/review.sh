@@ -18,8 +18,10 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-PROFILES_DIR="$HERE/skills/profiles"
-JUDGE_SKILL="$HERE/skills/judge/SKILL.md"
+SKILLS_DIR="$HERE/skills"
+JUDGE_SKILL="$SKILLS_DIR/review-judge/SKILL.md"
+# Profiles are every review-* skill except the judge; profile name = dir minus "review-".
+list_profiles() { for d in "$SKILLS_DIR"/review-*/; do n=$(basename "$d"); [ "$n" = review-judge ] || echo "${n#review-}"; done; }
 
 profile="all"
 pr=""
@@ -39,7 +41,7 @@ while [ $# -gt 0 ]; do
     --agents) agents="$2"; shift 2 ;;
     --judge) judge="$2"; shift 2 ;;
     --dry-run) dry_run=1; shift ;;
-    --list) ls "$PROFILES_DIR"; exit 0 ;;
+    --list) list_profiles; exit 0 ;;
     -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     *) die "unknown arg: $1" ;;
   esac
@@ -51,9 +53,9 @@ skill_body() { awk 'NR==1 && /^---$/ {fm=1; next} fm && /^---$/ {fm=0; next} !fm
 
 # ── 1. Select profiles ──────────────────────────────────────────────────────
 if [ "$profile" = "all" ]; then
-  profiles=$(ls "$PROFILES_DIR")
+  profiles=$(list_profiles)
 else
-  [ -f "$PROFILES_DIR/$profile/SKILL.md" ] || die "no profile '$profile' (try --list)"
+  [ -f "$SKILLS_DIR/review-$profile/SKILL.md" ] && [ "$profile" != judge ] || die "no profile '$profile' (try --list)"
   profiles="$profile"
 fi
 
@@ -110,7 +112,7 @@ for p in $profiles; do
     id="$p.$a"
     reviewers="$reviewers $id"
     {
-      skill_body "$PROFILES_DIR/$p/SKILL.md"
+      skill_body "$SKILLS_DIR/review-$p/SKILL.md"
       echo
       echo "Review profile: $p"
       echo
