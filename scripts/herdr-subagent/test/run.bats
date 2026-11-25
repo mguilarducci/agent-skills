@@ -75,11 +75,12 @@ EOF
 }
 
 @test "--flag=value works like --flag value, in any order" {
+	# develop is checked out nowhere, which would abort the Base update.
 	git branch develop
-	run --separate-stderr "$SCRIPT" run --branch=x/one --base=develop -- "task"
+	run --separate-stderr "$SCRIPT" run --no-base-update --branch=x/one --base=develop -- "task"
 	[ "$status" -eq 0 ]
 	[ -d "$REPO/.worktrees/x-one" ]
-	run --separate-stderr "$SCRIPT" run --base develop --branch x/two -- "task"
+	run --separate-stderr "$SCRIPT" run --no-base-update --base develop --branch x/two -- "task"
 	[ "$status" -eq 0 ]
 	[ "$(git -C "$REPO/.worktrees/x-two" rev-parse --abbrev-ref HEAD)" = "x/two" ]
 }
@@ -88,7 +89,7 @@ EOF
 	git checkout -q -b develop
 	git commit -q --allow-empty -m dev
 	git checkout -q main
-	run --separate-stderr "$SCRIPT" run --base develop --branch b -- "task"
+	run --separate-stderr "$SCRIPT" run --no-base-update --base develop --branch b -- "task"
 	[ "$status" -eq 0 ]
 	[ "$(git -C "$REPO/.worktrees/b" rev-parse HEAD)" = "$(git rev-parse develop)" ]
 }

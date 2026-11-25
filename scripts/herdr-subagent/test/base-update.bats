@@ -195,12 +195,16 @@ assert_aborts() {
 	[ "$(git -C "$REPO/.worktrees/second" rev-parse HEAD)" = "$up" ]
 }
 
-@test "a Base that already has origin/main needs no clean worktree" {
-	git branch develop
+@test "changes in the Base branch's worktree abort with exit 3 even when it already has origin/main" {
 	printf 'new\n' >untracked.txt
-	run --separate-stderr "$SCRIPT" run --base develop --branch b -- "task"
-	[ "$status" -eq 0 ]
-	[ -d "$REPO/.worktrees/b" ]
+	assert_aborts --branch b -- "task"
+	[[ "$stderr" == *"uncommitted or untracked"* ]] || false
+}
+
+@test "a non-main Base branch not checked out anywhere aborts with exit 3 even when no merge is needed" {
+	git branch develop
+	assert_aborts --base develop --branch b -- "task"
+	[[ "$stderr" == *"not checked out"* ]] || false
 }
 
 @test "help run documents --no-base-update and exit 3" {

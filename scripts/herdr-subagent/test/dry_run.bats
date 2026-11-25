@@ -132,11 +132,19 @@ undo_run() {
 	[ "${lines[0]}" = "git fetch -q origin" ]
 	[ "${lines[1]}" = "git worktree add -b b $WT develop" ]
 	[[ "$stderr" == *"develop is not checked out in any worktree"*"exit 3"* ]] || false
+	[[ "$stderr" != *"unless"* ]] || false
 
 	git -C "$REPO" remote remove origin
 	run --separate-stderr "$SCRIPT" run --dry-run --branch b -- "task"
 	[ "$status" -eq 0 ]
 	[[ "$stderr" == *"no origin remote"*"exit 3"* ]] || false
+}
+
+@test "changes in the Base branch's worktree are noted on stderr as an exit-3 abort" {
+	printf 'new\n' >"$REPO/untracked.txt"
+	run --separate-stderr "$SCRIPT" run --dry-run --branch b -- "task"
+	[ "$status" -eq 0 ]
+	[[ "$stderr" == *"uncommitted or untracked"*"exit 3"* ]] || false
 }
 
 @test "--dry-run --json prints the --json object with terminal null and the commands" {

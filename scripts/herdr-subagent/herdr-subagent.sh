@@ -187,7 +187,7 @@ refuse_taken_names() {
 	fi
 	# `hc run --name` must be unique among live terminals (plain `hc ls`).
 	local live
-	live="$(hc ls --json)" || die 1 "hc ls failed; nothing was created"
+	live="$(hc ls --json)" || die 4 "hc ls failed, so hc is not usable; nothing was created"
 	if printf '%s\n' "$live" | grep -o '"name"[[:space:]]*:[[:space:]]*"[^"]*"' |
 		sed 's/.*"\([^"]*\)"$/\1/' | grep -qxF -- "$hc_name"; then
 		taken "live hc terminal named $hc_name"
@@ -257,12 +257,38 @@ worktree_with_branch() {
 	'
 }
 
+# Decides the Base update step from local state only, shared by run and the
+# dry run so they cannot drift apart. Sets BASE_STEP to one of:
+#   ff-worktree  fast-forward main in BASE_WT, where it is checked out
+#   ff-ref       fast-forward the main ref (checked out nowhere)
+#   merge        merge origin/main into the Base branch in BASE_WT
+#   abort        BASE_ABORT says why; run exits 3
+# The abort cases hold even when the Base branch already has origin/main.
+base_update_step() {
+	local base="$1"
+	BASE_ABORT=""
+	BASE_WT="$(worktree_with_branch "$base")"
+	if ! git remote get-url origin >/dev/null 2>&1; then
+		BASE_STEP="abort" BASE_ABORT="no origin remote"
+	# .worktrees/ holds earlier Herdr subagents' worktrees; it is not dirt.
+	elif [ -n "$BASE_WT" ] && [ -n "$(git -C "$BASE_WT" status --porcelain --untracked-files=normal -- ':(top,exclude).worktrees')" ]; then
+		BASE_STEP="abort" BASE_ABORT="$BASE_WT (where $base is checked out) has uncommitted or untracked changes"
+	elif [ "$base" = "main" ]; then
+		if [ -n "$BASE_WT" ]; then BASE_STEP="ff-worktree"; else BASE_STEP="ff-ref"; fi
+	elif [ -n "$BASE_WT" ]; then
+		BASE_STEP="merge"
+	else
+		BASE_STEP="abort" BASE_ABORT="$base is not checked out in any worktree, so origin/main cannot be merged into it"
+	fi
+}
+
 # Bring the Base branch up to date with origin/main. Main is fast-forwarded;
-# any other Base gets origin/main merged in. Never auto-resolves: anything
-# that is not clean aborts with exit 3 and leaves git as it was.
+# any other Base branch gets origin/main merged in. Never auto-resolves:
+# anything that is not clean aborts with exit 3 and leaves git as it was.
 base_update() {
-	local base="$1" wt
-	git remote get-url origin >/dev/null 2>&1 || base_update_abort "no origin remote"
+	local base="$1"
+	base_update_step "$base"
+	[ "$BASE_STEP" != "abort" ] || base_update_abort "$BASE_ABORT"
 	say "Base update: fetching origin"
 	git fetch -q origin >&2 || base_update_abort "git fetch origin failed"
 	git rev-parse --verify -q refs/remotes/origin/main >/dev/null ||
@@ -273,62 +299,52 @@ base_update() {
 		return 0
 	fi
 
-	wt="$(worktree_with_branch "$base")"
-	# .worktrees/ holds earlier Herdr subagents' worktrees; it is not dirt.
-	if [ -n "$wt" ] && [ -n "$(git -C "$wt" status --porcelain --untracked-files=normal -- ':(top,exclude).worktrees')" ]; then
-		base_update_abort "$wt (where $base is checked out) has uncommitted or untracked changes"
-	fi
-
-	if [ "$base" = "main" ]; then
+	case "$BASE_STEP" in
+	ff-worktree | ff-ref)
 		git merge-base --is-ancestor refs/heads/main origin/main ||
 			base_update_abort "main has diverged from origin/main (not a fast-forward)"
 		say "Base update: fast-forwarding main to origin/main"
-		if [ -n "$wt" ]; then
-			git -C "$wt" merge -q --ff-only origin/main >&2 ||
-				base_update_abort "git merge --ff-only origin/main failed in $wt"
+		if [ "$BASE_STEP" = "ff-worktree" ]; then
+			git -C "$BASE_WT" merge -q --ff-only origin/main >&2 ||
+				base_update_abort "git merge --ff-only origin/main failed in $BASE_WT"
 		else
 			git update-ref -m "$PROG: Base update" refs/heads/main \
 				"$(git rev-parse origin/main)" "$(git rev-parse refs/heads/main)" ||
 				base_update_abort "could not fast-forward main"
 		fi
-		return 0
-	fi
-
-	[ -n "$wt" ] ||
-		base_update_abort "$base is not checked out in any worktree, so origin/main cannot be merged into it"
-	git merge-tree --write-tree "refs/heads/$base" origin/main >/dev/null 2>&1 ||
-		base_update_abort "merging origin/main into $base would conflict"
-	say "Base update: merging origin/main into $base in $wt"
-	if ! git -C "$wt" merge -q --no-edit origin/main >&2; then
-		git -C "$wt" merge --abort >/dev/null 2>&1
-		base_update_abort "git merge origin/main failed in $wt"
-	fi
+		;;
+	merge)
+		git merge-tree --write-tree "refs/heads/$base" origin/main >/dev/null 2>&1 ||
+			base_update_abort "merging origin/main into $base would conflict"
+		say "Base update: merging origin/main into $base in $BASE_WT"
+		if ! git -C "$BASE_WT" merge -q --no-edit origin/main >&2; then
+			git -C "$BASE_WT" merge --abort >/dev/null 2>&1
+			base_update_abort "git merge origin/main failed in $BASE_WT"
+		fi
+		;;
+	esac
 }
 
 # The Base update as shell lines, for --dry-run. Reads only local state:
 # whether origin/main has new commits is unknown without the fetch, so the
 # plan shows the step run would take if it does (if not, run skips it).
-# What would make run abort with exit 3 and is already known is noted on
-# stderr; dirt and conflicts are only knowable at run time.
+# An abort that is already known is noted on stderr; a diverged main or a
+# conflicting merge is only knowable after the fetch.
 base_update_plan() {
-	local base="$1" wt
-	git remote get-url origin >/dev/null 2>&1 ||
-		say "dry run: no origin remote; run would abort the Base update (exit 3)"
+	local base="$1"
+	base_update_step "$base"
+	[ "$BASE_STEP" != "abort" ] ||
+		say "dry run: $BASE_ABORT; run would abort the Base update (exit 3)"
 	shell_line git fetch -q origin
-	wt="$(worktree_with_branch "$base")"
-	if [ "$base" = "main" ]; then
-		if [ -n "$wt" ]; then
-			shell_line git -C "$wt" merge -q --ff-only origin/main
-		else
-			# The old value is main as it is now, as in run.
-			shell_line git update-ref -m "$PROG: Base update" refs/heads/main \
-				refs/remotes/origin/main "$(git rev-parse refs/heads/main)"
-		fi
-	elif [ -n "$wt" ]; then
-		shell_line git -C "$wt" merge -q --no-edit origin/main
-	else
-		say "dry run: $base is not checked out in any worktree; run would abort the Base update (exit 3) unless $base already has origin/main"
-	fi
+	case "$BASE_STEP" in
+	ff-worktree) shell_line git -C "$BASE_WT" merge -q --ff-only origin/main ;;
+	ff-ref)
+		# The old value is main as it is now, as in run.
+		shell_line git update-ref -m "$PROG: Base update" refs/heads/main \
+			refs/remotes/origin/main "$(git rev-parse refs/heads/main)"
+		;;
+	merge) shell_line git -C "$BASE_WT" merge -q --no-edit origin/main ;;
+	esac
 }
 
 # --- json --------------------------------------------------------------------
@@ -387,14 +403,19 @@ shell_line() {
 
 # --- task file -------------------------------------------------------------
 
-# Sets $task from a file, or from stdin for "-". Trailing newlines are dropped
-# (a heredoc always ends with one).
+# Sets $task from a file, or from stdin for "-", byte-for-byte: the trailing
+# "." sentinel keeps $(...) from dropping trailing newlines.
 read_task_file() {
 	local f="$1"
 	if [ "$f" != "-" ]; then
 		[ -f "$f" ] && [ -r "$f" ] || usage_error "cannot read --task-file: $f"
 	fi
-	task="$(cat -- "$f")" || usage_error "cannot read --task-file: $f"
+	task="$(cat -- "$f" && printf .)" || usage_error "cannot read --task-file: $f"
+	task="${task%.}"
+	case "$task" in
+	*[![:space:]]*) ;;
+	*) usage_error "empty task in --task-file: $f" ;;
+	esac
 }
 
 # --- run ---------------------------------------------------------------------

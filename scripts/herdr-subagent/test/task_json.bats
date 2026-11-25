@@ -28,7 +28,7 @@ Run `make test` and \n keep 'it' green.
 EOF
 	[ "$status" -eq 0 ]
 	[ "$output" = "t9z" ]
-	expected="$(printf '%s\n%s\n\n%s' \
+	expected="$(printf '%s\n%s\n\n\n%s' \
 		"Fix \"the\" parser's \$HOME handling." \
 		"Run \`make test\` and \\n keep 'it' green." \
 		"$(report_text)")"
@@ -39,7 +39,14 @@ EOF
 	printf 'from a file\n' >"$SANDBOX/task.txt"
 	run --separate-stderr "$SCRIPT" run --task-file="$SANDBOX/task.txt" --branch b
 	[ "$status" -eq 0 ]
-	[ "$(hc_text)" = "$(printf 'from a file\n\n%s' "$(report_text)")" ]
+	[ "$(hc_text)" = "$(printf 'from a file\n\n\n%s' "$(report_text)")" ]
+}
+
+@test "--task-file keeps every trailing newline of the task" {
+	printf 'ends with two\n\n' >"$SANDBOX/task.txt"
+	run --separate-stderr "$SCRIPT" run --task-file "$SANDBOX/task.txt" --branch b
+	[ "$status" -eq 0 ]
+	[ "$(hc_text)" = "$(printf 'ends with two\n\n\n\n%s' "$(report_text)")" ]
 }
 
 @test "--task-file together with a task after -- exits 2" {
@@ -51,13 +58,14 @@ EOF
 	assert_nothing_created
 }
 
-@test "a missing, unreadable or empty --task-file exits 2" {
+@test "a missing, unreadable, empty or whitespace-only --task-file exits 2" {
 	: >"$SANDBOX/empty.txt"
 	printf '\n\n' >"$SANDBOX/newlines.txt"
+	printf ' \t\n \n' >"$SANDBOX/blank.txt"
 	mkdir "$SANDBOX/dir"
 	printf 'x\n' >"$SANDBOX/locked.txt"
 	chmod 000 "$SANDBOX/locked.txt"
-	for f in "$SANDBOX/nope.txt" "$SANDBOX/empty.txt" "$SANDBOX/newlines.txt" "$SANDBOX/dir" "$SANDBOX/locked.txt"; do
+	for f in "$SANDBOX/nope.txt" "$SANDBOX/empty.txt" "$SANDBOX/newlines.txt" "$SANDBOX/blank.txt" "$SANDBOX/dir" "$SANDBOX/locked.txt"; do
 		run --separate-stderr "$SCRIPT" run --branch b --task-file "$f"
 		[ "$status" -eq 2 ]
 		[ -z "$output" ]
@@ -98,7 +106,7 @@ EOF
 	git branch 'we"ird' main
 	model="$(printf 'a"b\\c\td\001e')"
 	run --separate-stderr "$SCRIPT" run --json --harness claude --model "$model" \
-		--base 'we"ird' --branch b -- "task"
+		--no-base-update --base 'we"ird' --branch b -- "task"
 	[ "$status" -eq 0 ]
 	[ "$(printf '%s' "$output" | jq -c .)" = "$(jq -nc --arg wt "$odd/.worktrees/b" --arg m "$model" \
 		'{terminal:"t9z",name:"b",branch:"b",base:"we\"ird",worktree:$wt,harness:"claude",model:$m}')" ]

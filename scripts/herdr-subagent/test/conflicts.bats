@@ -93,7 +93,8 @@ setup() {
 
 @test "an ignored .worktrees/ gives no warning" {
 	printf '.worktrees/\n' >"$REPO/.gitignore"
-	run --separate-stderr "$SCRIPT" run --branch b -- "task"
+	# The untracked .gitignore would abort the Base update.
+	run --separate-stderr "$SCRIPT" run --no-base-update --branch b -- "task"
 	[ "$status" -eq 0 ]
 	[[ "$stderr" != *"not ignored"* ]] || false
 }
@@ -114,9 +115,9 @@ setup() {
 	[[ "$output" == *"pick another name and retry"* ]] || false
 }
 
-@test "a failing hc ls exits 1 and creates nothing" {
+@test "a failing hc ls exits 4 and creates nothing" {
 	HC_STUB_LS_EXIT=3 HC_STUB_LS="" run --separate-stderr "$SCRIPT" run --branch b -- "task"
-	[ "$status" -eq 1 ]
+	[ "$status" -eq 4 ]
 	[[ "$stderr" == *"hc ls failed"* ]] || false
 	assert_nothing_created
 }
