@@ -32,6 +32,12 @@ hc wait "$t"
 - `--branch <name>` (required): the new branch. The worktree goes to
   `<main-checkout-root>/.worktrees/<slug(branch)>`.
 - `--base <branch>`: the local branch to start from (default `main`).
+- Base update: before creating the worktree, it fetches `origin` and brings
+  the base branch up to date with `origin/main`, in the worktree that has it
+  checked out (`main` is fast-forwarded; any other base gets `origin/main`
+  merged in). If that can't complete cleanly (uncommitted changes, a diverged
+  `main`, a conflicting merge, a failed fetch), it exits 3, changes nothing and
+  creates nothing. `--no-base-update` skips it.
 - stdout is only the Herdr subagent's terminal id; progress and a summary with
   the next `hc` commands go to stderr.
 
