@@ -52,4 +52,7 @@ hc wait "$t"
   `{"terminal","name","branch","base","worktree","harness","model"}`, with
   `model` set to `null` when `--model` is left out.
 
+- An existing branch, worktree path or live hc name is never reused: `run`
+  exits 5 before creating anything. Pick another name and retry.
+
 See `herdr-subagent help run` for every flag and exit code.

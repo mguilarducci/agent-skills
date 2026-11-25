@@ -134,17 +134,30 @@ EOF
 }
 
 @test "a failing git worktree add exits 1 and never offers to delete a branch it did not create" {
-	git branch taken
-	run --separate-stderr "$SCRIPT" run --branch taken -- "task"
+	cat >"$STUBS/git" <<'STUB'
+#!/bin/bash
+if [ "${1:-}" = worktree ] && [ "${2:-}" = add ]; then
+	echo "fatal: stubbed failure" >&2
+	exit 128
+fi
+exec /usr/bin/git "$@"
+STUB
+	chmod +x "$STUBS/git"
+	run --separate-stderr "$SCRIPT" run --branch b -- "task"
 	[ "$status" -eq 1 ]
 	[ ! -e "$HC_LOG/argc" ]
 	[[ "$stderr" != *"git branch -d"* ]] || false
-	git show-ref --verify --quiet refs/heads/taken
+	run git show-ref --verify --quiet refs/heads/b
+	[ "$status" -ne 0 ]
 }
 
 @test "Ctrl-C exits 130 and prints what was left behind" {
 	cat >"$STUBS/hc" <<'STUB'
 #!/bin/bash
+if [ "$1" = ls ]; then
+	echo '{"terminals":[]}'
+	exit 0
+fi
 kill -INT "$PPID"
 sleep 1
 echo '{"address":"t1"}'

@@ -87,6 +87,8 @@ Exit codes:
   2    usage error; nothing was created
   4    missing git repo, hc, the chosen harness or \$HC_TERMINAL_ID;
        nothing was created
+  5    branch, worktree path or hc name already exists; nothing was created:
+       pick another name and retry (an existing branch is never reused)
   130  interrupted
 
 Report issues: $ISSUES_URL
@@ -140,6 +142,46 @@ hc_name_for() {
 		LC_ALL=C sed -e 's/[^a-z0-9_-]/-/g' -e 's/^-*//' -e 's/-*$//' |
 		cut -c1-32 |
 		sed -e 's/^-*//' -e 's/-*$//'
+}
+
+# --- conflicts ---------------------------------------------------------------
+
+taken() {
+	say "already exists: $1"
+	say "pick another --branch and retry"
+	exit 5
+}
+
+# Exits 5 if the branch, the worktree path or the hc name is already taken.
+# An existing branch is never reused.
+refuse_taken_names() {
+	local branch="$1" wt_path="$2" hc_name="$3"
+	git show-ref --verify --quiet "refs/heads/$branch" &&
+		taken "local branch $branch"
+	# Only what is already known locally: no fetch just for this check.
+	git show-ref --verify --quiet "refs/remotes/origin/$branch" &&
+		taken "remote branch origin/$branch"
+	# Also catches two branches with the same slug (feat/x, feat-x).
+	if [ -e "$wt_path" ] || [ -L "$wt_path" ]; then
+		taken "worktree path $wt_path"
+	fi
+	# `hc run --name` must be unique among live terminals (plain `hc ls`).
+	local live
+	live="$(hc ls --json)" || die 1 "hc ls failed; nothing was created"
+	if printf '%s\n' "$live" | grep -o '"name"[[:space:]]*:[[:space:]]*"[^"]*"' |
+		sed 's/.*"\([^"]*\)"$/\1/' | grep -qxF -- "$hc_name"; then
+		taken "live hc terminal named $hc_name"
+	fi
+	return 0
+}
+
+# Warns only: never writes .gitignore or .git/info/exclude.
+warn_if_worktrees_not_ignored() {
+	local root="$1"
+	git -C "$root" check-ignore -q .worktrees/ && return 0
+	say "warning: .worktrees/ is not ignored in $root; to ignore it, run one of:"
+	printf "  echo '.worktrees/' >> .gitignore            (shared, committed)\n" >&2
+	printf "  echo '.worktrees/' >> .git/info/exclude     (only you)\n" >&2
 }
 
 # --- leftovers ---------------------------------------------------------------
@@ -322,6 +364,9 @@ cmd_run() {
 		die 4 "cannot find the main checkout"
 	root="$(dirname "$common")"
 	local wt_path="$root/.worktrees/$slug"
+
+	refuse_taken_names "$branch" "$wt_path" "$hc_name"
+	warn_if_worktrees_not_ignored "$root"
 
 	# Work starts here: from now on, failures may leave things behind.
 	WT_PATH="$wt_path"
