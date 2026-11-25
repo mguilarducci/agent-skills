@@ -2,7 +2,7 @@
 # herdr-subagent: launch a Claude Herdr subagent in its own worktree.
 #
 # Runs on macOS's stock bash 3.2: no associative arrays, no ${x,,}.
-# Needs only git, hc and claude at runtime.
+# Needs only git, hc and claude (or codex) at runtime.
 
 set -u
 
@@ -46,6 +46,7 @@ Examples:
   t=\$($PROG run --branch feat/login -- "Add OAuth login")
   $PROG run --base develop --branch fix/parser -- "Fix the v1.2 parser"
   $PROG run --branch=issue-6 -- "Implement issue #6"
+  $PROG run --harness codex --effort high --branch fix/ci -- "Fix CI"
 
 Usage:
   $PROG run [flags] -- "<task>"
@@ -54,6 +55,12 @@ Flags:
   --branch <name>   New branch for the worktree (required).
                     ASCII letters, digits and . _ / - only.
   --base <branch>   Existing local branch to start from (default: main).
+  --harness <claude|codex>
+                    Agent to start (default: claude).
+  --model <s>       Passed as-is: claude --model <s>, codex -m <s>.
+  --effort <s>      Passed as-is: claude --effort <s>,
+                    codex -c model_reasoning_effort=<s>.
+                    Left out, the harness's own config applies.
   -h, --help        Show this help.
 
 Flags take \`--flag value\` or \`--flag=value\`, in any order before \`--\`.
@@ -66,7 +73,8 @@ Exit codes:
   0    launched
   1    git or hc failed after work started (leftovers are printed)
   2    usage error; nothing was created
-  4    missing git repo, hc, claude or \$HC_TERMINAL_ID; nothing was created
+  4    missing git repo, hc, the chosen harness or \$HC_TERMINAL_ID;
+       nothing was created
   5    branch, worktree path or hc name already exists; nothing was created:
        pick another name and retry (an existing branch is never reused)
   130  interrupted
@@ -204,6 +212,7 @@ on_interrupt() {
 
 cmd_run() {
 	local base="main" branch="" task="" have_task=0 arg
+	local harness="claude" model="" effort="" have_model=0 have_effort=0
 
 	while [ "$#" -gt 0 ]; do
 		arg="$1"
@@ -219,13 +228,31 @@ cmd_run() {
 			;;
 		--base=*) base="${arg#--base=}" ;;
 		--branch=*) branch="${arg#--branch=}" ;;
-		--base | --branch)
+		--harness=*) harness="${arg#--harness=}" ;;
+		--model=*)
+			model="${arg#--model=}"
+			have_model=1
+			;;
+		--effort=*)
+			effort="${arg#--effort=}"
+			have_effort=1
+			;;
+		--base | --branch | --harness | --model | --effort)
 			if [ "$#" -lt 2 ] || [ "$2" = "--" ]; then
 				usage_error "$arg needs a value"
 			fi
 			case "$arg" in
 			--base) base="$2" ;;
 			--branch) branch="$2" ;;
+			--harness) harness="$2" ;;
+			--model)
+				model="$2"
+				have_model=1
+				;;
+			--effort)
+				effort="$2"
+				have_effort=1
+				;;
 			esac
 			shift
 			;;
@@ -238,6 +265,10 @@ cmd_run() {
 	[ "$have_task" -eq 1 ] && [ -n "$task" ] || usage_error "missing task"
 	[ -n "$branch" ] || usage_error "missing --branch"
 	[ -n "$base" ] || usage_error "--base needs a value"
+	case "$harness" in
+	claude | codex) ;;
+	*) usage_error "unknown --harness (claude or codex): $harness" ;;
+	esac
 
 	command -v git >/dev/null 2>&1 || die 4 "git not found on PATH"
 
@@ -256,7 +287,7 @@ cmd_run() {
 
 	git rev-parse --git-dir >/dev/null 2>&1 || die 4 "not inside a git repository"
 	command -v hc >/dev/null 2>&1 || die 4 "hc not found on PATH"
-	command -v claude >/dev/null 2>&1 || die 4 "claude not found on PATH"
+	command -v "$harness" >/dev/null 2>&1 || die 4 "$harness not found on PATH"
 	[ -n "${HC_TERMINAL_ID:-}" ] || die 4 "HC_TERMINAL_ID is not set (run this from a Herdr terminal)"
 	local parent_id="$HC_TERMINAL_ID"
 
@@ -289,9 +320,21 @@ cmd_run() {
 		"Report with hc send $parent_id \"<result or blocker>\" when done or stuck, not just to acknowledge." \
 		"Write long answers to a file and send its path.")"
 
-	say "starting Claude as $hc_name"
+	# Never empty: bash 3.2 with set -u rejects "${a[@]}" on an empty array.
+	local cmd
+	if [ "$harness" = "codex" ]; then
+		cmd=(codex --no-daemon)
+		[ "$have_model" -eq 0 ] || cmd+=(-m "$model")
+		[ "$have_effort" -eq 0 ] || cmd+=(-c "model_reasoning_effort=$effort")
+	else
+		cmd=(claude)
+		[ "$have_model" -eq 0 ] || cmd+=(--model "$model")
+		[ "$have_effort" -eq 0 ] || cmd+=(--effort "$effort")
+	fi
+
+	say "starting $harness as $hc_name"
 	local out
-	out="$(hc run --bg --name "$hc_name" --cwd "$wt_path" claude -- "$text")" ||
+	out="$(hc run --bg --name "$hc_name" --cwd "$wt_path" "${cmd[@]}" -- "$text")" ||
 		fail_after_start "hc run failed"
 
 	# Piped, hc prints JSON; take its "address". Fall back to a bare id.
@@ -307,20 +350,11 @@ cmd_run() {
 
 	trap - INT
 	printf '%s\n' "$t"
-	print_summary "$t" "$hc_name" "$wt_path" "$branch" "$base" "$root"
+	print_summary "$t" "$hc_name" "$wt_path" "$branch" "$base" "$root" "$harness"
 }
 
 print_summary() {
-	local t="$1" name="$2" wt_path="$3" branch="$4" base="$5" root="$6"
-	# Printed literally for the reader, not expanded.
-	# shellcheck disable=SC2088
-	local user="~/.claude/settings.json"
-	local proj="$root/.claude/settings.json"
-	local local_="$root/.claude/settings.local.json"
-	local w=${#user}
-	[ "${#proj}" -le "$w" ] || w=${#proj}
-	[ "${#local_}" -le "$w" ] || w=${#local_}
-
+	local t="$1" name="$2" wt_path="$3" branch="$4" base="$5" root="$6" harness="$7"
 	{
 		printf '\n'
 		say "started Herdr subagent $t ($name)"
@@ -332,6 +366,36 @@ print_summary() {
 		printf '  hc wait %s\n' "$t"
 		printf '  hc kill %s\n' "$t"
 		printf '\n'
+	} >&2
+	if [ "$harness" = "codex" ]; then
+		print_codex_warning "$t" >&2
+	else
+		print_claude_warning "$root" >&2
+	fi
+}
+
+print_codex_warning() {
+	# Printed literally for the reader, not expanded.
+	# shellcheck disable=SC2016
+	printf '%s\n' 'Codex may ask before each `hc send`. To allow it for good, run:'
+	printf '%s\n' '  mkdir -p ~/.codex/rules'
+	printf '%s\n' "  echo 'prefix_rule(pattern=[\"hc\", \"send\"], decision=\"allow\")' >> ~/.codex/rules/default.rules"
+	printf '%s\n' 'If Codex shows a trust dialog, open it with:'
+	printf '  hc attach %s\n' "$1"
+}
+
+print_claude_warning() {
+	local root="$1"
+	# Printed literally for the reader, not expanded.
+	# shellcheck disable=SC2088
+	local user="~/.claude/settings.json"
+	local proj="$root/.claude/settings.json"
+	local local_="$root/.claude/settings.local.json"
+	local w=${#user}
+	[ "${#proj}" -le "$w" ] || w=${#proj}
+	[ "${#local_}" -le "$w" ] || w=${#local_}
+
+	{
 		# shellcheck disable=SC2016 # literal backticks
 		printf '%s\n' 'Claude may ask before each `hc send`. To allow it for good, add "Bash(hc send:*)" to permissions.allow in one of:'
 		printf '  %-*s   (user: every project)\n' "$w" "$user"

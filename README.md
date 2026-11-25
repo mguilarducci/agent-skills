@@ -12,7 +12,7 @@ mise trust && mise install
 
 ## herdr-subagent
 
-Launches a Claude Herdr subagent through `hc`, in a new worktree on a new branch.
+Launches a Claude or Codex Herdr subagent through `hc`, in a new worktree on a new branch.
 
 ### Install
 
@@ -32,6 +32,11 @@ hc wait "$t"
 - `--branch <name>` (required): the new branch. The worktree goes to
   `<main-checkout-root>/.worktrees/<slug(branch)>`.
 - `--base <branch>`: the local branch to start from (default `main`).
+- `--harness claude|codex`: the agent to start (default `claude`). Codex runs
+  as `codex --no-daemon`.
+- `--model <s>`, `--effort <s>`: passed to the harness as-is (Codex gets
+  `-m <s>` and `-c model_reasoning_effort=<s>`). Left out, your harness config
+  applies.
 - stdout is only the Herdr subagent's terminal id; progress and a summary with
   the next `hc` commands go to stderr.
 

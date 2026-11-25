@@ -68,7 +68,7 @@ setup() {
 	[ "$status" -eq 2 ]
 	run --separate-stderr "$SCRIPT" help nope
 	[ "$status" -eq 2 ]
-	run --separate-stderr "$SCRIPT" run --branch b --model x -- "task"
+	run --separate-stderr "$SCRIPT" run --branch b --nope x -- "task"
 	[ "$status" -eq 2 ]
 	run --separate-stderr "$SCRIPT" run --branch b extra -- "task"
 	[ "$status" -eq 2 ]
