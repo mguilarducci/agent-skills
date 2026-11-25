@@ -22,3 +22,7 @@ A Herdr subagent whose harness differs from the parent's harness. It is always l
 **Base branch**:
 The branch a Herdr subagent's worktree is created from; `main` unless another is given.
 _Avoid_: Source branch, parent branch
+
+**Base update**:
+Bringing the base branch up to date with its remote before a Herdr subagent's worktree is created from it.
+_Avoid_: Sync, refresh, step 0
