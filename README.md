@@ -37,7 +37,19 @@ hc wait "$t"
 - `--model <s>`, `--effort <s>`: passed to the harness as-is (Codex gets
   `-m <s>` and `-c model_reasoning_effort=<s>`). Left out, your harness config
   applies.
+- `--task-file <path|->`: read the task from a file, or from stdin with `-`,
+  instead of after `--`. Handy for long or multi-line prompts:
+
+  ```sh
+  herdr-subagent run --branch fix/docs --task-file - <<'EOF'
+  Fix the "quoted" $HOME and `backtick` bits in the docs.
+  EOF
+  ```
+
 - stdout is only the Herdr subagent's terminal id; progress and a summary with
   the next `hc` commands go to stderr.
+- `--json`: stdout is one JSON object instead,
+  `{"terminal","name","branch","base","worktree","harness","model"}`, with
+  `model` set to `null` when `--model` is left out.
 
 See `herdr-subagent help run` for every flag and exit code.
