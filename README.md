@@ -43,8 +43,20 @@ hc wait "$t"
   merged in). If that can't complete cleanly (uncommitted changes, a diverged
   `main`, a conflicting merge, a failed fetch), it exits 3, changes nothing and
   creates nothing. `--no-base-update` skips it.
+- `--task-file <path|->`: read the task from a file, or from stdin with `-`,
+  instead of after `--`. Handy for long or multi-line prompts:
+
+  ```sh
+  herdr-subagent run --branch fix/docs --task-file - <<'EOF'
+  Fix the "quoted" $HOME and `backtick` bits in the docs.
+  EOF
+  ```
+
 - stdout is only the Herdr subagent's terminal id; progress and a summary with
   the next `hc` commands go to stderr.
+- `--json`: stdout is one JSON object instead,
+  `{"terminal","name","branch","base","worktree","harness","model"}`, with
+  `model` set to `null` when `--model` is left out.
 
 - An existing branch, worktree path or live hc name is never reused: `run`
   exits 5 before creating anything. Pick another name and retry.

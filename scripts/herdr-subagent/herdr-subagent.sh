@@ -38,6 +38,8 @@ Report issues: $ISSUES_URL
 EOF
 }
 
+# The indented "EOF" below is example text, not the end token.
+# shellcheck disable=SC1039
 print_run_help() {
 	cat <<EOF
 $PROG run - start a Claude Herdr subagent in a new worktree
@@ -47,9 +49,13 @@ Examples:
   $PROG run --base develop --branch fix/parser -- "Fix the v1.2 parser"
   $PROG run --branch=issue-6 -- "Implement issue #6"
   $PROG run --harness codex --effort high --branch fix/ci -- "Fix CI"
+  $PROG run --branch fix/docs --task-file - <<'EOF'
+  Fix the "quoted" \$HOME and \`backtick\` bits in the docs.
+  EOF
 
 Usage:
   $PROG run [flags] -- "<task>"
+  $PROG run [flags] --task-file <path|->
 
 Flags:
   --branch <name>   New branch for the worktree (required).
@@ -62,13 +68,19 @@ Flags:
                     codex -c model_reasoning_effort=<s>.
                     Left out, the harness's own config applies.
   --no-base-update  Skip the Base update (see below).
+  --task-file <path|->
+                    Read the task from a file, or from stdin with -,
+                    instead of after --. Trailing newlines are dropped.
+  --json            Print one JSON object on stdout instead of the id:
+                    {"terminal","name","branch","base","worktree",
+                    "harness","model"}; model is null without --model.
   -h, --help        Show this help.
 
 Flags take \`--flag value\` or \`--flag=value\`, in any order before \`--\`.
 
 The worktree goes to <main-checkout-root>/.worktrees/<slug(branch)>.
-stdout carries only the Herdr subagent's terminal id; progress, errors and
-the summary go to stderr.
+stdout carries only the Herdr subagent's terminal id (or the --json
+object); progress, errors and the summary go to stderr.
 
 Base update: before creating the worktree, run fetches origin and brings
 the Base branch up to date with origin/main, in the worktree that has it
@@ -283,11 +295,49 @@ base_update() {
 	fi
 }
 
+# --- json --------------------------------------------------------------------
+
+# Prints $1 as a quoted JSON string: escapes \ and ", and every control char.
+json_str() {
+	local s="$1" i c
+	s="${s//\\/\\\\}"
+	s="${s//\"/\\\"}"
+	s="${s//$'\n'/\\n}"
+	s="${s//$'\t'/\\t}"
+	s="${s//$'\r'/\\r}"
+	case "$s" in
+	*[[:cntrl:]]*)
+		i=1
+		while [ "$i" -le 31 ]; do
+			# shellcheck disable=SC2059 # the octal escape must be in the format
+			c="$(printf "\\$(printf '%03o' "$i")")"
+			s="${s//"$c"/$(printf '\\u%04x' "$i")}"
+			i=$((i + 1))
+		done
+		s="${s//$'\177'/\\u007f}"
+		;;
+	esac
+	printf '"%s"' "$s"
+}
+
+# --- task file -------------------------------------------------------------
+
+# Sets $task from a file, or from stdin for "-". Trailing newlines are dropped
+# (a heredoc always ends with one).
+read_task_file() {
+	local f="$1"
+	if [ "$f" != "-" ]; then
+		[ -f "$f" ] && [ -r "$f" ] || usage_error "cannot read --task-file: $f"
+	fi
+	task="$(cat -- "$f")" || usage_error "cannot read --task-file: $f"
+}
+
 # --- run ---------------------------------------------------------------------
 
 cmd_run() {
 	local base="main" branch="" task="" have_task=0 update_base=1 arg
 	local harness="claude" model="" effort="" have_model=0 have_effort=0
+	local task_file="" have_task_file=0 json=0
 
 	while [ "$#" -gt 0 ]; do
 		arg="$1"
@@ -305,6 +355,11 @@ cmd_run() {
 		--base=*) base="${arg#--base=}" ;;
 		--branch=*) branch="${arg#--branch=}" ;;
 		--harness=*) harness="${arg#--harness=}" ;;
+		--task-file=*)
+			task_file="${arg#--task-file=}"
+			have_task_file=1
+			;;
+		--json) json=1 ;;
 		--model=*)
 			model="${arg#--model=}"
 			have_model=1
@@ -313,7 +368,7 @@ cmd_run() {
 			effort="${arg#--effort=}"
 			have_effort=1
 			;;
-		--base | --branch | --harness | --model | --effort)
+		--base | --branch | --harness | --model | --effort | --task-file)
 			if [ "$#" -lt 2 ] || [ "$2" = "--" ]; then
 				usage_error "$arg needs a value"
 			fi
@@ -321,6 +376,10 @@ cmd_run() {
 			--base) base="$2" ;;
 			--branch) branch="$2" ;;
 			--harness) harness="$2" ;;
+			--task-file)
+				task_file="$2"
+				have_task_file=1
+				;;
 			--model)
 				model="$2"
 				have_model=1
@@ -338,7 +397,13 @@ cmd_run() {
 		shift
 	done
 
-	[ "$have_task" -eq 1 ] && [ -n "$task" ] || usage_error "missing task"
+	if [ "$have_task_file" -eq 1 ]; then
+		[ "$have_task" -eq 0 ] || usage_error "give the task either after -- or with --task-file, not both"
+		read_task_file "$task_file"
+		[ -n "$task" ] || usage_error "empty task in --task-file: $task_file"
+	fi
+	[ "$have_task" -eq 1 ] || [ "$have_task_file" -eq 1 ] || usage_error "missing task"
+	[ -n "$task" ] || usage_error "missing task"
 	[ -n "$branch" ] || usage_error "missing --branch"
 	[ -n "$base" ] || usage_error "--base needs a value"
 	case "$harness" in
@@ -431,7 +496,15 @@ cmd_run() {
 	[ -n "$t" ] || fail_after_start "could not read the terminal id from hc run: $out"
 
 	trap - INT
-	printf '%s\n' "$t"
+	if [ "$json" -eq 1 ]; then
+		local model_json="null"
+		[ "$have_model" -eq 0 ] || model_json="$(json_str "$model")"
+		printf '{"terminal":%s,"name":%s,"branch":%s,"base":%s,"worktree":%s,"harness":%s,"model":%s}\n' \
+			"$(json_str "$t")" "$(json_str "$hc_name")" "$(json_str "$branch")" \
+			"$(json_str "$base")" "$(json_str "$wt_path")" "$(json_str "$harness")" "$model_json"
+	else
+		printf '%s\n' "$t"
+	fi
 	print_summary "$t" "$hc_name" "$wt_path" "$branch" "$base" "$root" "$harness"
 }
 
