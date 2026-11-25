@@ -99,6 +99,46 @@ assert_aborts() {
 	[ "$(git rev-parse main)" != "$up" ]
 }
 
+@test "branch mergeOptions that keep a merge from committing do not stop the Base update" {
+	git checkout -q -b develop
+	git commit -q --allow-empty -m dev
+	git config branch.develop.mergeOptions "--no-commit --squash"
+	up="$(advance_origin)"
+	run --separate-stderr "$SCRIPT" run --base develop --branch b -- "task"
+	[ "$status" -eq 0 ]
+	[ "$(git rev-parse develop^2)" = "$up" ]
+	[ "$(git -C "$REPO/.worktrees/b" rev-parse HEAD)" = "$(git rev-parse develop)" ]
+	run git rev-parse -q --verify MERGE_HEAD
+	[ "$status" -ne 0 ]
+	[ -z "$(git status --porcelain -- ':(exclude).worktrees')" ]
+}
+
+@test "branch mergeOptions that keep a fast-forward from committing do not stop the Base update" {
+	git config branch.main.mergeOptions "--squash --no-commit"
+	up="$(advance_origin)"
+	run --separate-stderr "$SCRIPT" run --branch b -- "task"
+	[ "$status" -eq 0 ]
+	[ "$(git rev-parse main)" = "$up" ]
+	[ "$(git -C "$REPO/.worktrees/b" rev-parse HEAD)" = "$up" ]
+	[ -z "$(git status --porcelain -- ':(exclude).worktrees')" ]
+}
+
+@test "a merge that succeeds without bringing in origin/main aborts with exit 3" {
+	# A merge that exits 0 but changes nothing, whatever the reason.
+	cat >"$STUBS/git" <<'STUB'
+#!/bin/bash
+[ "${3:-}" = merge ] && [ "${4:-}" = -q ] && exit 0
+exec /usr/bin/git "$@"
+STUB
+	chmod +x "$STUBS/git"
+	git checkout -q -b develop
+	advance_origin >/dev/null
+	assert_aborts --base develop --branch b -- "task"
+	[[ "$stderr" == *"does not contain origin/main"* ]] || false
+	git checkout -q main
+	assert_aborts --branch b -- "task"
+}
+
 @test "--no-base-update does no fetch and no merge" {
 	git remote set-url origin "$SANDBOX/missing.git"
 	before="$(git rev-parse main)"

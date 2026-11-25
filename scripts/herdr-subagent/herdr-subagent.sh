@@ -256,6 +256,12 @@ base_update_abort() {
 	exit 3
 }
 
+# git merge flags for the Base update, shared by run and the dry run. They
+# override branch.<base>.mergeOptions and merge.* config (such as --no-commit
+# or --squash) that would leave the merge uncommitted.
+BASE_MERGE_FF=(-q --ff-only --no-squash --commit)
+BASE_MERGE=(-q --no-edit --no-squash --commit)
+
 # Path of the worktree that has refs/heads/$1 checked out, if any.
 worktree_with_branch() {
 	git worktree list --porcelain | awk -v ref="refs/heads/$1" '
@@ -312,7 +318,7 @@ base_update() {
 			base_update_abort "main has diverged from origin/main (not a fast-forward)"
 		say "Base update: fast-forwarding main to origin/main"
 		if [ "$BASE_STEP" = "ff-worktree" ]; then
-			git -C "$BASE_WT" merge -q --ff-only origin/main >&2 ||
+			git -C "$BASE_WT" merge "${BASE_MERGE_FF[@]}" origin/main >&2 ||
 				base_update_abort "git merge --ff-only origin/main failed in $BASE_WT"
 		else
 			git update-ref -m "$PROG: Base update" refs/heads/main \
@@ -324,12 +330,23 @@ base_update() {
 		git merge-tree --write-tree "refs/heads/$base" origin/main >/dev/null 2>&1 ||
 			base_update_abort "merging origin/main into $base would conflict"
 		say "Base update: merging origin/main into $base in $BASE_WT"
-		if ! git -C "$BASE_WT" merge -q --no-edit origin/main >&2; then
+		if ! git -C "$BASE_WT" merge "${BASE_MERGE[@]}" origin/main >&2; then
 			git -C "$BASE_WT" merge --abort >/dev/null 2>&1
 			base_update_abort "git merge origin/main failed in $BASE_WT"
 		fi
 		;;
 	esac
+
+	# Config the flags above do not override could still leave the merge
+	# uncommitted: never start the agent from a Base without origin/main.
+	if ! git merge-base --is-ancestor origin/main "refs/heads/$base"; then
+		if [ -n "$BASE_WT" ]; then
+			# The worktree was clean before, so this only undoes the merge.
+			git -C "$BASE_WT" merge --abort >/dev/null 2>&1 ||
+				git -C "$BASE_WT" reset -q --merge >/dev/null 2>&1
+		fi
+		base_update_abort "$base does not contain origin/main after the update"
+	fi
 }
 
 # The Base update as shell lines, for --dry-run. Reads only local state:
@@ -344,7 +361,7 @@ base_update_plan() {
 		say "dry run: $BASE_ABORT; run would abort the Base update (exit 3)"
 	shell_line git fetch -q origin
 	case "$BASE_STEP" in
-	ff-worktree) shell_line git -C "$BASE_WT" merge -q --ff-only origin/main ;;
+	ff-worktree) shell_line git -C "$BASE_WT" merge "${BASE_MERGE_FF[@]}" origin/main ;;
 	ff-ref)
 		# One line, guarded as in run: only a fast-forward moves main, and the
 		# old value is main as it is now.
@@ -353,7 +370,7 @@ base_update_plan() {
 			"$(shell_line git update-ref -m "$PROG: Base update" refs/heads/main \
 				refs/remotes/origin/main "$(git rev-parse refs/heads/main)")"
 		;;
-	merge) shell_line git -C "$BASE_WT" merge -q --no-edit origin/main ;;
+	merge) shell_line git -C "$BASE_WT" merge "${BASE_MERGE[@]}" origin/main ;;
 	esac
 }
 

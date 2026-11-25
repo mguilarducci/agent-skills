@@ -145,7 +145,7 @@ undo_run() {
 	run --separate-stderr "$SCRIPT" run --dry-run --base develop --branch b -- "task"
 	[ "$status" -eq 0 ]
 	[ "${lines[0]}" = "git fetch -q origin" ]
-	[ "${lines[1]}" = "git -C $REPO merge -q --no-edit origin/main" ]
+	[ "${lines[1]}" = "git -C $REPO merge -q --no-edit --no-squash --commit origin/main" ]
 	[ "${lines[2]}" = "git worktree add -b b $WT refs/heads/develop" ]
 }
 
