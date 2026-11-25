@@ -221,13 +221,15 @@ print_leftovers() {
 	local left=0
 	if [ "$PATH_EXISTED" -eq 0 ] && [ -n "$WT_PATH" ] && [ -e "$WT_PATH" ]; then
 		say "worktree left at $WT_PATH"
-		printf '  git worktree remove %s\n' "$WT_PATH" >&2
+		printf '  ' >&2
+		shell_line git worktree remove "$WT_PATH" >&2
 		left=1
 	fi
 	if [ "$BRANCH_EXISTED" -eq 0 ] && [ -n "$BRANCH" ] &&
 		git show-ref --verify --quiet "refs/heads/$BRANCH" 2>/dev/null; then
 		[ "$left" -eq 1 ] || say "branch left behind: $BRANCH"
-		printf '  git branch -d %s\n' "$BRANCH" >&2
+		printf '  ' >&2
+		shell_line git branch -d "$BRANCH" >&2
 	fi
 }
 

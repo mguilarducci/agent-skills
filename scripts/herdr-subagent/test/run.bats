@@ -127,6 +127,20 @@ EOF
 	[[ "$stderr" == *"git branch -d feat/x"* ]] || false
 }
 
+@test "cleanup commands quote a worktree path with spaces, so they work when pasted" {
+	git clone -q "$SANDBOX/origin.git" "$SANDBOX/my repo" 2>/dev/null
+	cd "$SANDBOX/my repo"
+	HC_STUB_EXIT=3 HC_STUB_OUTPUT="" run --separate-stderr "$SCRIPT" run --branch feat/x -- "task"
+	[ "$status" -eq 1 ]
+	[[ "$stderr" == *"git worktree remove '$SANDBOX/my repo/.worktrees/feat-x'"* ]] || false
+	printf '%s\n' "$stderr" | sed -n 's/^  \(git .*\)$/\1/p' >"$SANDBOX/cleanup"
+	[ "$(wc -l <"$SANDBOX/cleanup" | tr -d ' ')" = "2" ]
+	/bin/bash -e "$SANDBOX/cleanup"
+	[ ! -e "$SANDBOX/my repo/.worktrees/feat-x" ]
+	run git show-ref --verify --quiet refs/heads/feat/x
+	[ "$status" -ne 0 ]
+}
+
 @test "hc output without a terminal id exits 1 with cleanup commands" {
 	HC_STUB_OUTPUT="something odd happened" run --separate-stderr "$SCRIPT" run --branch b -- "task"
 	[ "$status" -eq 1 ]
