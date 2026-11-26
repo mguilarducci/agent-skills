@@ -60,10 +60,9 @@ Usage:
 Flags:
   --branch <name>   New branch for the worktree (required).
                     ASCII letters, digits and . _ / - only.
-  --base <branch>   Base branch: an existing local branch to start from
+  --base <branch>   Base branch: a branch on origin to start from
                     (default: main).
   --template <name> hc template to launch from (default: implementer).
-  --no-base-update  Skip the Base update (see below).
   -h, --help        Show this help.
 
 Flags take \`--flag value\` or \`--flag=value\`, in any order.
@@ -73,7 +72,9 @@ Use a quoted heredoc (<<'EOF') so quotes, \$ and backticks reach the
 Herdr subagent unchanged. An empty or whitespace-only task, or stdin
 attached to a terminal, exits 2.
 
-The worktree goes to <main-checkout-root>/.worktrees/<slug(branch)>.
+start fetches <base> from origin and creates the new branch from
+origin/<base>. No local branch is ever written. The worktree goes to
+<main-checkout-root>/.worktrees/<slug(branch)>.
 
 Templates: the Herdr subagent is started from an hc template and the task.
 The template sets the Harness, model, effort, permissions and the child's
@@ -90,21 +91,12 @@ reason is hc's reason when task_sent is false, null otherwise. stderr
 carries only progress, errors, leftovers after a failure and one final
 "started" line.
 
-Base update: before creating the worktree, start fetches origin and brings
-the Base branch up to date with origin/main, in the worktree that has it
-checked out. main is fast-forwarded; any other Base branch gets origin/main
-merged in. A main that is not checked out anywhere is fast-forwarded as a
-ref. It never auto-resolves: these abort with exit 3 and leave git as it
-was, even when the Base branch already has origin/main: uncommitted or
-untracked changes where the Base branch is checked out, or a Base branch
-other than main checked out nowhere. So do a diverged main, a conflicting
-merge, a failed fetch or no origin.
-
 Exit codes:
   0    launched
   1    git or hc failed after work started (leftovers are printed)
   2    usage error, including a TTY or empty stdin; nothing was created
-  3    the Base update could not complete cleanly; nothing was created
+  3    no origin, a failed fetch, or <base> missing on origin; nothing
+       was created
   4    missing git repo, hc (or a failing hc ls or hc templates), the
        template or \$HC_TERMINAL_ID; nothing was created
   5    branch, worktree path or hc name already exists; nothing was created:
@@ -316,105 +308,29 @@ on_interrupt() {
 	exit 130
 }
 
-# --- base update -------------------------------------------------------------
+# --- origin base -------------------------------------------------------------
 
-# Abort the Base update: nothing was changed and nothing will be created.
-base_update_abort() {
-	say "Base update failed: $*"
-	say "nothing was created; fix it and rerun, or skip it with --no-base-update"
+origin_base_fail() {
+	say "$*"
+	say "nothing was created"
 	exit 3
 }
 
-# git merge flags for the Base update. They
-# override branch.<base>.mergeOptions and merge.* config (such as --no-commit
-# or --squash) that would leave the merge uncommitted.
-BASE_MERGE_FF=(-q --ff-only --no-squash --commit)
-BASE_MERGE=(-q --no-edit --no-squash --commit)
-
-# Path of the worktree that has refs/heads/$1 checked out, if any.
-worktree_with_branch() {
-	git worktree list --porcelain | awk -v ref="refs/heads/$1" '
-		/^worktree / { wt = substr($0, 10) }
-		$0 == "branch " ref { print wt; exit }
-	'
-}
-
-# Decides the Base update step from local state only. Sets BASE_STEP to one of:
-#   ff-worktree  fast-forward main in BASE_WT, where it is checked out
-#   ff-ref       fast-forward the main ref (checked out nowhere)
-#   merge        merge origin/main into the Base branch in BASE_WT
-#   abort        BASE_ABORT says why; start exits 3
-# The abort cases hold even when the Base branch already has origin/main.
-base_update_step() {
-	local base="$1"
-	BASE_ABORT=""
-	BASE_WT="$(worktree_with_branch "$base")"
-	if ! git remote get-url origin >/dev/null 2>&1; then
-		BASE_STEP="abort" BASE_ABORT="no origin remote"
-	# .worktrees/ holds earlier Herdr subagents' worktrees; it is not dirt.
-	elif [ -n "$BASE_WT" ] && [ -n "$(git -C "$BASE_WT" status --porcelain --untracked-files=normal -- ':(top,exclude).worktrees')" ]; then
-		BASE_STEP="abort" BASE_ABORT="$BASE_WT (where $base is checked out) has uncommitted or untracked changes"
-	elif [ "$base" = "main" ]; then
-		if [ -n "$BASE_WT" ]; then BASE_STEP="ff-worktree"; else BASE_STEP="ff-ref"; fi
-	elif [ -n "$BASE_WT" ]; then
-		BASE_STEP="merge"
-	else
-		BASE_STEP="abort" BASE_ABORT="$base is not checked out in any worktree, so origin/main cannot be merged into it"
+# Fetches $1 from origin into refs/remotes/origin/$1, the ref the new branch
+# starts from. Only that remote-tracking ref is written, never a local branch.
+fetch_origin_base() {
+	local base="$1" rc
+	git remote get-url origin >/dev/null 2>&1 || origin_base_fail "no origin remote"
+	say "fetching $base from origin"
+	if ! git fetch -q --no-tags origin "+refs/heads/$base:refs/remotes/origin/$base" >&2; then
+		# ls-remote --exit-code exits 2 when origin answered without the branch.
+		git ls-remote -q --exit-code --heads origin "refs/heads/$base" >/dev/null 2>&1
+		rc=$?
+		[ "$rc" -ne 2 ] || origin_base_fail "origin has no branch $base"
+		origin_base_fail "git fetch origin $base failed"
 	fi
-}
-
-# Bring the Base branch up to date with origin/main. Main is fast-forwarded;
-# any other Base branch gets origin/main merged in. Never auto-resolves:
-# anything that is not clean aborts with exit 3 and leaves git as it was.
-base_update() {
-	local base="$1"
-	base_update_step "$base"
-	[ "$BASE_STEP" != "abort" ] || base_update_abort "$BASE_ABORT"
-	say "Base update: fetching origin"
-	git fetch -q origin >&2 || base_update_abort "git fetch origin failed"
-	git rev-parse --verify -q refs/remotes/origin/main >/dev/null ||
-		base_update_abort "origin has no main branch"
-
-	if git merge-base --is-ancestor origin/main "refs/heads/$base"; then
-		say "Base update: $base already has origin/main"
-		return 0
-	fi
-
-	case "$BASE_STEP" in
-	ff-worktree | ff-ref)
-		git merge-base --is-ancestor refs/heads/main origin/main ||
-			base_update_abort "main has diverged from origin/main (not a fast-forward)"
-		say "Base update: fast-forwarding main to origin/main"
-		if [ "$BASE_STEP" = "ff-worktree" ]; then
-			git -C "$BASE_WT" merge "${BASE_MERGE_FF[@]}" origin/main >&2 ||
-				base_update_abort "git merge --ff-only origin/main failed in $BASE_WT"
-		else
-			git update-ref -m "$PROG: Base update" refs/heads/main \
-				"$(git rev-parse origin/main)" "$(git rev-parse refs/heads/main)" ||
-				base_update_abort "could not fast-forward main"
-		fi
-		;;
-	merge)
-		git merge-tree --write-tree "refs/heads/$base" origin/main >/dev/null 2>&1 ||
-			base_update_abort "merging origin/main into $base would conflict"
-		say "Base update: merging origin/main into $base in $BASE_WT"
-		if ! git -C "$BASE_WT" merge "${BASE_MERGE[@]}" origin/main >&2; then
-			git -C "$BASE_WT" merge --abort >/dev/null 2>&1
-			base_update_abort "git merge origin/main failed in $BASE_WT"
-		fi
-		;;
-	esac
-
-	# Config the flags above do not override could still leave the merge
-	# uncommitted: never start the agent from a Base without origin/main.
-	if ! git merge-base --is-ancestor origin/main "refs/heads/$base"; then
-		if [ -n "$BASE_WT" ]; then
-			# The worktree was clean before, so this only undoes the merge.
-			git -C "$BASE_WT" merge --abort >/dev/null 2>&1 ||
-				git -C "$BASE_WT" reset -q --merge >/dev/null 2>&1
-		fi
-		base_update_abort "$base does not contain origin/main after the update"
-	fi
+	git rev-parse --verify -q "refs/remotes/origin/$base^{commit}" >/dev/null ||
+		origin_base_fail "origin has no branch $base"
 }
 
 # --- json --------------------------------------------------------------------
@@ -492,7 +408,7 @@ read_stdin_task() {
 # --- start -------------------------------------------------------------------
 
 cmd_start() {
-	local base="main" branch="" task="" update_base=1 arg
+	local base="main" branch="" task="" arg
 	local template="implementer"
 	local flag value
 
@@ -500,7 +416,6 @@ cmd_start() {
 		arg="$1"
 		case "$arg" in
 		--) usage_error "unexpected --: the task is read from stdin" ;;
-		--no-base-update) update_base=0 ;;
 		--base | --branch | --template | \
 			--base=* | --branch=* | --template=*)
 			# --flag=value and --flag value both end up as $flag and $value.
@@ -543,6 +458,8 @@ cmd_start() {
 	fi
 	git check-ref-format --branch "$branch" >/dev/null 2>&1 ||
 		usage_error "invalid branch name: $branch"
+	git check-ref-format --branch "$base" >/dev/null 2>&1 ||
+		usage_error "invalid --base branch name: $base"
 
 	local slug hc_name
 	slug="$(slugify "$branch")"
@@ -555,9 +472,6 @@ cmd_start() {
 	[ -n "${HC_TERMINAL_ID:-}" ] || die 4 "HC_TERMINAL_ID is not set (run this from a Herdr terminal)"
 	refuse_missing_template "$template"
 
-	git show-ref --verify --quiet "refs/heads/$base" ||
-		usage_error "--base must name an existing local branch: $base"
-
 	local root
 	root="$(main_checkout)" || exit 4
 	local wt_path="$root/.worktrees/$slug"
@@ -565,10 +479,8 @@ cmd_start() {
 	refuse_taken_names "$branch" "$wt_path" "$hc_name"
 
 	# After the name-conflict checks; Ctrl-C leaves git as git leaves it.
-	if [ "$update_base" -eq 1 ]; then
-		trap on_interrupt INT
-		base_update "$base"
-	fi
+	trap on_interrupt INT
+	fetch_origin_base "$base"
 
 	# Work starts here: from now on, failures may leave things behind.
 	WT_PATH="$wt_path"
@@ -577,8 +489,8 @@ cmd_start() {
 	if [ -e "$wt_path" ]; then PATH_EXISTED=1; else PATH_EXISTED=0; fi
 	trap on_interrupt INT
 
-	say "creating worktree $wt_path on new branch $branch from $base"
-	git worktree add -q -b "$branch" "$wt_path" "refs/heads/$base" >&2 ||
+	say "creating worktree $wt_path on new branch $branch from origin/$base"
+	git worktree add -q --no-track -b "$branch" "$wt_path" "refs/remotes/origin/$base" >&2 ||
 		fail_after_start "git worktree add failed"
 
 	# hc joins the template body and the task into the first message and adds

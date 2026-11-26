@@ -84,12 +84,12 @@ EOF
 	odd="$SANDBOX/re\"po\\x"
 	git clone -q "$SANDBOX/origin.git" "$odd" 2>/dev/null
 	cd "$odd"
-	git branch 'we"ird' main
+	git push -q origin 'main:we"ird'
 	tpl="$(printf 'a"b\\c\td\001e')"
 	export HC_STUB_TEMPLATES
 	HC_STUB_TEMPLATES="$(jq -nc --arg n "$tpl" '{templates:[{name:$n,description:"d",command:"c"}]}')"
 	run --separate-stderr "$SCRIPT" start --template "$tpl" \
-		--no-base-update --base 'we"ird' --branch b <<<"task"
+		--base 'we"ird' --branch b <<<"task"
 	[ "$status" -eq 0 ]
 	[ "$(printf '%s' "$output" | jq -c .)" = "$(jq -nc --arg wt "$odd/.worktrees/b" --arg t "$tpl" \
 		'{terminal:"t9z",name:"b",branch:"b",base:"we\"ird",worktree:$wt,template:$t,task_sent:true,reason:null}')" ]
