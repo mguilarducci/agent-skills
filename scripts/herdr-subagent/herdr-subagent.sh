@@ -394,18 +394,34 @@ origin_base_fail() {
 # Fetches $1 from origin into refs/remotes/origin/$1, the ref the new branch
 # starts from. Only that remote-tracking ref is written, never a local branch.
 fetch_origin_base() {
+	try_fetch_origin_base "$1" || origin_base_fail "$FETCH_ERROR"
+}
+
+# Like fetch_origin_base, but returns 1 with the cause in FETCH_ERROR.
+FETCH_ERROR=""
+try_fetch_origin_base() {
 	local base="$1" rc
-	git remote get-url origin >/dev/null 2>&1 || origin_base_fail "no origin remote"
+	FETCH_ERROR=""
+	if ! git remote get-url origin >/dev/null 2>&1; then
+		FETCH_ERROR="no origin remote"
+		return 1
+	fi
 	say "fetching $base from origin"
 	if ! git fetch -q --no-tags origin "+refs/heads/$base:refs/remotes/origin/$base" >&2; then
 		# ls-remote --exit-code exits 2 when origin answered without the branch.
 		git ls-remote -q --exit-code --heads origin "refs/heads/$base" >/dev/null 2>&1
 		rc=$?
-		[ "$rc" -ne 2 ] || origin_base_fail "origin has no branch $base"
-		origin_base_fail "git fetch origin $base failed"
+		if [ "$rc" -eq 2 ]; then
+			FETCH_ERROR="origin has no branch $base"
+		else
+			FETCH_ERROR="git fetch origin $base failed"
+		fi
+		return 1
 	fi
-	git rev-parse --verify -q "refs/remotes/origin/$base^{commit}" >/dev/null ||
-		origin_base_fail "origin has no branch $base"
+	if ! git rev-parse --verify -q "refs/remotes/origin/$base^{commit}" >/dev/null; then
+		FETCH_ERROR="origin has no branch $base"
+		return 1
+	fi
 }
 
 # --- json --------------------------------------------------------------------
@@ -640,6 +656,128 @@ print_json() {
 		"$issue" "$LABELS_JSON" "$task_sent" "$reason_json"
 }
 
+# --- close -------------------------------------------------------------------
+
+# Prints the path of the worktree that has $1 checked out, if any.
+worktree_of_branch() {
+	git worktree list --porcelain | awk -v want="branch refs/heads/$1" '
+		/^worktree / { wt = substr($0, 10) }
+		$0 == want { print wt; exit }'
+}
+
+# Prints the subagent.base label in the hc terminal JSON $1, if it has one.
+base_label() {
+	printf '%s\n' "$1" |
+		sed -n 's/.*"subagent\.base"[[:space:]]*:[[:space:]]*"\([^"\\]*\)".*/\1/p' | head -n 1
+}
+
+# Deletes branch $1 once merged into a freshly fetched origin/$2: its tip is
+# an ancestor of origin/$2 (PRs merge with merge commits). Otherwise sets
+# KEPT to why it stays; KEPT is empty once the branch is deleted.
+KEPT=""
+delete_branch_if_merged() {
+	local branch="$1" base="$2" tip
+	KEPT=""
+	if ! tip="$(git rev-parse -q --verify "refs/heads/$branch^{commit}")"; then
+		KEPT="no local branch $branch"
+		return 0
+	fi
+	# A stale origin/<base> could say merged when it is not: no fetch, no delete.
+	if ! try_fetch_origin_base "$base"; then
+		KEPT="could not check the merge: $FETCH_ERROR"
+	elif git merge-base --is-ancestor "$tip" "refs/remotes/origin/$base"; then
+		say "deleting branch $branch (merged into origin/$base)"
+		git branch -q -D "$branch" >&2 || die 1 "git branch -D $branch failed; close again to finish"
+		return 0
+	elif [ "$(git ls-remote -q origin "refs/heads/$branch" 2>/dev/null | cut -f1)" = "$tip" ]; then
+		KEPT="not merged into origin/$base; pushed to origin/$branch"
+	else
+		KEPT="not merged into origin/$base; not pushed (its tip is not on origin)"
+	fi
+	say "keeping branch $branch: $KEPT"
+}
+
+cmd_close() {
+	local branch="" arg
+	for arg in "$@"; do
+		case "$arg" in
+		-*) usage_error "unknown flag: $arg (close has no flags)" ;;
+		esac
+		[ -z "$branch" ] || usage_error "unexpected argument: $arg (close takes one branch)"
+		branch="$arg"
+	done
+	[ -n "$branch" ] || usage_error "missing branch: close <branch>"
+
+	command -v git >/dev/null 2>&1 || die 4 "git not found on PATH"
+	git check-ref-format --branch "$branch" >/dev/null 2>&1 ||
+		usage_error "invalid branch name: $branch"
+	git rev-parse --git-dir >/dev/null 2>&1 || die 4 "not inside a git repository"
+	command -v hc >/dev/null 2>&1 || die 4 "hc not found on PATH"
+
+	# Everything is looked up before anything is touched.
+	local root wt_path
+	root="$(main_checkout)" || exit 4
+	wt_path="$(worktree_of_branch "$branch")"
+	[ "$wt_path" != "$root" ] ||
+		usage_error "$branch is checked out in the main checkout; close only cleans up a Herdr subagent's worktree"
+
+	# Finished terminals too: a Herdr subagent ends with its parent.
+	local listed terminals t got base=""
+	listed="$(hc ls --all --json --label "subagent.repo=$root" --label "subagent.branch=$branch")" ||
+		die 4 "hc ls failed, so hc is not usable; nothing was touched"
+	terminals="$(printf '%s\n' "$listed" | grep -o '"address"[[:space:]]*:[[:space:]]*"[^"]*"' |
+		sed 's/.*"\([^"]*\)"$/\1/')"
+	for t in $terminals; do
+		got="$(hc get "$t" --json)" || die 4 "hc get $t failed; nothing was touched"
+		[ -n "$base" ] || base="$(base_label "$got")"
+	done
+	# With no terminal record left, the base falls back to main.
+	[ -n "$base" ] || base="main"
+
+	if [ -z "$wt_path" ] && [ -z "$terminals" ]; then
+		say "no worktree and no labelled hc terminal for branch $branch"
+		exit 5
+	fi
+
+	if [ -n "$wt_path" ] && [ -d "$wt_path" ] &&
+		[ -n "$(git -C "$wt_path" status --porcelain --untracked-files=all)" ]; then
+		say "worktree $wt_path has uncommitted or untracked changes; nothing was touched"
+		exit 3
+	fi
+
+	local killed=false removed=false deleted=false kept_json=null wt_json=null
+	for t in $terminals; do
+		say "killing terminal $t"
+		# hc kill waits for the program to end, and succeeds once it has.
+		hc kill "$t" --json >/dev/null || die 1 "hc kill $t failed; close again to finish"
+		hc rm "$t" --json >/dev/null || die 1 "hc rm $t failed; close again to finish"
+		killed=true
+	done
+
+	if [ -n "$wt_path" ]; then
+		say "removing worktree $wt_path"
+		if [ -d "$wt_path" ]; then
+			git worktree remove "$wt_path" >&2 ||
+				die 1 "git worktree remove $wt_path failed; close again to finish"
+		else
+			git worktree prune >&2 || die 1 "git worktree prune failed; close again to finish"
+		fi
+		removed=true
+		wt_json="$(json_str "$wt_path")"
+	fi
+
+	delete_branch_if_merged "$branch" "$base"
+	if [ -z "$KEPT" ]; then
+		deleted=true
+	else
+		kept_json="$(json_str "$KEPT")"
+	fi
+
+	printf '{"branch":%s,"worktree":%s,"terminal_killed":%s,"worktree_removed":%s,"branch_deleted":%s,"branch_kept_reason":%s}\n' \
+		"$(json_str "$branch")" "$wt_json" "$killed" "$removed" "$deleted" "$kept_json"
+	say "closed $branch"
+}
+
 # --- main --------------------------------------------------------------------
 
 main() {
@@ -672,6 +810,10 @@ main() {
 	start)
 		shift
 		cmd_start "$@"
+		;;
+	close)
+		shift
+		cmd_close "$@"
 		;;
 	-*) usage_error "unknown flag: $1" ;;
 	*) usage_error "unknown subcommand: $1" ;;

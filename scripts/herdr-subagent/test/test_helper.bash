@@ -22,6 +22,8 @@ setup_sandbox() {
 	# `hc get <t>` is answered from $HC_STUB_GET (default: a live terminal
 	# whose address is <t>), exits $HC_STUB_GET_EXIT, and is only logged in
 	# $HC_LOG/get-calls.
+	# `hc kill <t>` and `hc rm <t>` are only logged in $HC_LOG/kill-calls and
+	# $HC_LOG/rm-calls, and exit $HC_STUB_KILL_EXIT and $HC_STUB_RM_EXIT.
 	cat >"$STUBS/hc" <<'STUB'
 #!/bin/bash
 if [ "${1:-}" = "templates" ]; then
@@ -41,6 +43,11 @@ if [ "${1:-}" = "get" ]; then
 		printf '{"address":"%s","state":"live","parent":null}\n' "${2:-}"
 	fi
 	exit "${HC_STUB_GET_EXIT:-0}"
+fi
+if [ "${1:-}" = "kill" ] || [ "${1:-}" = "rm" ]; then
+	printf '%s\n' "$*" >>"$HC_LOG/$1-calls"
+	if [ "$1" = "kill" ]; then exit "${HC_STUB_KILL_EXIT:-0}"; fi
+	exit "${HC_STUB_RM_EXIT:-0}"
 fi
 if [ "${1:-}" = "ls" ]; then
 	printf '%s\n' "$*" >>"$HC_LOG/ls-calls"
