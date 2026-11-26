@@ -187,19 +187,29 @@ undo_run() {
 	assert_nothing_created
 }
 
-@test "stderr has the summary and the harness warning, with a placeholder for the terminal id" {
+@test "stderr has the summary, named by the hc name, and Next: points to the run without --dry-run" {
+	run --separate-stderr "$SCRIPT" run --dry-run --branch b -- "task"
+	[ "$status" -eq 0 ]
+	[[ "$stderr" == *"dry run: nothing was run; the commands above would start Herdr subagent b"$'\n'* ]] || false
+	[[ "$stderr" == *"worktree: $WT"* ]] || false
+	[[ "$stderr" == *"Next: run the same command without --dry-run to start it."* ]] || false
+	[[ "$stderr" != *"hc read"* ]] || false
+	[[ "$stderr" != *"<terminal>"* ]] || false
+	[[ "$output" != *"<terminal>"* ]] || false
+}
+
+@test "the hc send permission hints stay, but not the Codex trust-dialog lines, which need a terminal" {
+	run --separate-stderr "$SCRIPT" run --dry-run --branch b -- "task"
+	[[ "$stderr" == *'add "Bash(hc send:*)" to permissions.allow'* ]] || false
+
 	printf '#!/bin/bash\nexit 0\n' >"$STUBS/codex"
 	chmod +x "$STUBS/codex"
-	run --separate-stderr "$SCRIPT" run --dry-run --harness codex --branch b -- "task"
+	run --separate-stderr "$SCRIPT" run --dry-run --json --harness codex --branch b -- "task"
 	[ "$status" -eq 0 ]
-	[[ "$stderr" == *"dry run"*"<terminal> (b)"* ]] || false
-	[[ "$stderr" == *"worktree: $WT"* ]] || false
-	[[ "$stderr" == *"hc wait <terminal>"* ]] || false
-	[[ "$stderr" == *"Codex may ask"*"hc attach <terminal>"* ]] || false
-	[[ "$output" != *"<terminal>"* ]] || false
-
-	run --separate-stderr "$SCRIPT" run --dry-run --branch b -- "task"
-	[[ "$stderr" == *"Claude may ask"* ]] || false
+	[[ "$stderr" == *'prefix_rule(pattern=["hc", "send"], decision="allow")'* ]] || false
+	[[ "$stderr" != *"trust dialog"* ]] || false
+	[[ "$stderr" != *"hc attach"* ]] || false
+	[[ "$stderr" != *"<terminal>"* ]] || false
 }
 
 @test "help run documents -n/--dry-run with a --dry-run --json example" {
