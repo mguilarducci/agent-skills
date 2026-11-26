@@ -248,8 +248,7 @@ refuse_taken_names() {
 	# `hc run --name` must be unique among live terminals (plain `hc ls`).
 	local live
 	live="$(hc ls --json)" || die 4 "hc ls failed, so hc is not usable; nothing was created"
-	if printf '%s\n' "$live" | grep -o '"name"[[:space:]]*:[[:space:]]*"[^"]*"' |
-		sed 's/.*"\([^"]*\)"$/\1/' | grep -qxF -- "$hc_name"; then
+	if json_get "$live" '"terminals"[]."name"' | grep -qxF -- "$hc_name"; then
 		exit_name_taken "live hc terminal named $hc_name"
 	fi
 	return 0
@@ -266,7 +265,7 @@ refuse_dead_parent() {
 	[ -n "$parent" ] || die 4 "no parent: $PARENT_HINT; nothing was created"
 	got="$(hc get "$parent" --json 2>/dev/null)" ||
 		die 4 "parent $parent is not a live hc terminal: $PARENT_HINT; nothing was created"
-	printf '%s\n' "$got" | grep -q '"state"[[:space:]]*:[[:space:]]*"live"' ||
+	[ "$(json_get "$got" '"state"')" = "live" ] ||
 		die 4 "parent $parent is not a live hc terminal: $PARENT_HINT; nothing was created"
 }
 
@@ -318,11 +317,15 @@ check_user_label() {
 refuse_missing_template() {
 	local name="$1" listed shipped
 	listed="$(hc templates --json)" || die 4 "hc templates failed, so hc is not usable; nothing was created"
-	# Compared as JSON text, so names with quotes or backslashes match too.
-	if printf '%s\n' "$listed" | sed 's/"name"[[:space:]]*:[[:space:]]*/"name":/g' |
-		grep -qF -- "\"name\":$(json_str "$name")"; then
-		return 0
-	fi
+	# Raw JSON strings fit on one line; each is decoded on its own, so a name
+	# with a newline or any escape still matches exactly.
+	local tok
+	while IFS= read -r tok; do
+		[ -n "$tok" ] || continue
+		[ "$(json_get "$tok" "" && printf .)" != "$name"$'\n.' ] || return 0
+	done <<EOF
+$(json_raw "$listed" '"templates"[]."name"')
+EOF
 	shipped="$(cd "$(dirname "$0")" && pwd -P)/templates"
 	say "template not found: $name (hc templates does not list it); nothing was created"
 	say "templates go in ~/.config/herdr-core/templates/$name.md; copy or link one from $shipped"
@@ -332,39 +335,25 @@ refuse_missing_template() {
 # Reads hc run's first_message record. Sets TASK_SENT (true/false),
 # REASON_JSON (a JSON string or null) and REASON_TEXT (for stderr).
 read_first_message() {
-	local rest
 	TASK_SENT="false" REASON_JSON="null" REASON_TEXT=""
-	case "$1" in
-	*'"first_message"'*) ;;
-	*)
+	if [ -z "$(json_raw "$1" '"first_message"')" ]; then
 		REASON_TEXT="hc did not report whether the task was sent"
 		REASON_JSON="$(json_str "$REASON_TEXT")"
 		return 0
-		;;
+	fi
+	if [ "$(json_raw "$1" '"first_message"."sent"')" = "true" ]; then
+		TASK_SENT="true"
+		return 0
+	fi
+	# hc's reason is already a JSON value: passed on as written.
+	REASON_JSON="$(json_raw "$1" '"first_message"."reason"')"
+	case "$REASON_JSON" in
+	"" | "{" | "[") REASON_JSON="null" ;;
 	esac
-	# The first "sent" and "reason" keys after "first_message" are its own.
-	rest="${1#*\"first_message\"}"
-	case "$rest" in
-	*'"sent"'*)
-		if printf '%s' "${rest#*\"sent\"}" | grep -Eq '^[[:space:]]*:[[:space:]]*true'; then
-			TASK_SENT="true"
-			return 0
-		fi
-		;;
-	esac
-	case "$rest" in
-	*'"reason"'*)
-		REASON_JSON="$(printf '%s' "${rest#*\"reason\"}" |
-			sed -nE '1s/^[[:space:]]*:[[:space:]]*("([^"\\]|\\.)*"|null).*/\1/p')"
-		;;
-	esac
-	[ -n "$REASON_JSON" ] || REASON_JSON="null"
 	if [ "$REASON_JSON" = "null" ]; then
 		REASON_TEXT="hc gave no reason"
 	else
-		REASON_TEXT="${REASON_JSON#\"}"
-		REASON_TEXT="${REASON_TEXT%\"}"
-		REASON_TEXT="$(printf '%s' "$REASON_TEXT" | sed -e 's/\\"/"/g' -e 's/\\\\/\\/g')"
+		REASON_TEXT="$(json_get "$1" '"first_message"."reason"')"
 	fi
 }
 
@@ -494,6 +483,121 @@ json_str() {
 		;;
 	esac
 	printf '"%s"' "$s"
+}
+
+# Reads hc's JSON without jq. A path is keys as JSON strings joined by "."
+# with "[]" for any array element: '"terminals"[]."name"'. Matching is exact,
+# so the same key in a nested object never matches. Prints one value per
+# line: JSON strings decoded, other scalars as written; objects and arrays
+# print "{" or "[" (enough to test that a key is there). Prints nothing
+# unless the whole input is one valid JSON value.
+# shellcheck disable=SC2016 # an awk program: $0 is awk's, not the shell's
+JSON_AWK='
+function ws() {
+	while (pos <= n && index(" \t\n\r", substr(s, pos, 1))) pos++
+}
+function str(   start, c) {
+	start = pos++
+	while (pos <= n) {
+		c = substr(s, pos, 1)
+		if (c == "\\") pos += 2
+		else if (c == "\"") return substr(s, start, ++pos - start)
+		else pos++
+	}
+	bad = 1
+	return ""
+}
+function hit(path, tok) {
+	if (path == want) out = out (raw ? tok : dec(tok)) "\n"
+}
+function value(path,   c, key, rest) {
+	ws()
+	c = substr(s, pos, 1)
+	if (c == "{" || c == "[") {
+		hit(path, c)
+		pos++
+		ws()
+		if (substr(s, pos, 1) == (c == "{" ? "}" : "]")) { pos++; return }
+		while (!bad) {
+			if (c == "{") {
+				ws()
+				if (substr(s, pos, 1) != "\"") { bad = 1; return }
+				key = str()
+				ws()
+				if (substr(s, pos++, 1) != ":") { bad = 1; return }
+				value(path == "" ? key : path "." key)
+			} else value(path "[]")
+			ws()
+			rest = substr(s, pos++, 1)
+			if (rest == ",") continue
+			if (rest != (c == "{" ? "}" : "]")) bad = 1
+			return
+		}
+	} else if (c == "\"") {
+		hit(path, str())
+	} else if (match(substr(s, pos), /^(true|false|null|-?[0-9][0-9.eE+-]*)/)) {
+		hit(path, substr(s, pos, RLENGTH))
+		pos += RLENGTH
+	} else bad = 1
+}
+function hex(h,   i, v) {
+	v = 0
+	for (i = 1; i <= 4; i++) v = v * 16 + index("0123456789abcdef", tolower(substr(h, i, 1))) - 1
+	return v
+}
+function utf8(cp) {
+	if (cp < 128) return cp ? sprintf("%c", cp) : ""
+	if (cp < 2048) return sprintf("%c%c", 192 + int(cp / 64), 128 + cp % 64)
+	if (cp < 65536) return sprintf("%c%c%c", 224 + int(cp / 4096), 128 + int(cp / 64) % 64, 128 + cp % 64)
+	return sprintf("%c%c%c%c", 240 + int(cp / 262144), 128 + int(cp / 4096) % 64, 128 + int(cp / 64) % 64, 128 + cp % 64)
+}
+function dec(tok,   o, i, c, e, cp, lo) {
+	if (substr(tok, 1, 1) != "\"") return tok
+	tok = substr(tok, 2, length(tok) - 2)
+	o = ""
+	for (i = 1; i <= length(tok); i++) {
+		c = substr(tok, i, 1)
+		if (c != "\\") { o = o c; continue }
+		e = substr(tok, ++i, 1)
+		if (e == "n") o = o "\n"
+		else if (e == "t") o = o "\t"
+		else if (e == "r") o = o "\r"
+		else if (e == "b") o = o "\b"
+		else if (e == "f") o = o "\f"
+		else if (e == "u") {
+			cp = hex(substr(tok, i + 1, 4))
+			i += 4
+			if (cp >= 55296 && cp < 56320 && substr(tok, i + 1, 2) == "\\u") {
+				lo = hex(substr(tok, i + 3, 4))
+				if (lo >= 56320 && lo < 57344) {
+					cp = 65536 + (cp - 55296) * 1024 + (lo - 56320)
+					i += 6
+				}
+			}
+			o = o utf8(cp)
+		} else o = o e
+	}
+	return o
+}
+{ s = s $0 "\n" }
+END {
+	want = ENVIRON["JSON_PATH"]
+	raw = ENVIRON["JSON_RAW"] == 1
+	n = length(s)
+	pos = 1
+	value("")
+	ws()
+	if (!bad && pos > n) printf "%s", out
+}'
+
+# json_get <json> <path>: the decoded values at <path>, one per line.
+json_get() {
+	printf '%s\n' "$1" | JSON_PATH="$2" JSON_RAW=0 LC_ALL=C awk "$JSON_AWK"
+}
+
+# json_raw <json> <path>: the values at <path> as JSON text, one per line.
+json_raw() {
+	printf '%s\n' "$1" | JSON_PATH="$2" JSON_RAW=1 LC_ALL=C awk "$JSON_AWK"
 }
 
 # --- shell quoting -----------------------------------------------------------
@@ -671,7 +775,7 @@ cmd_start() {
 
 	# Piped, hc prints JSON; take its "address". Fall back to a bare id.
 	local terminal
-	terminal="$(printf '%s\n' "$hc_output" | sed -n 's/.*"address"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+	terminal="$(json_get "$hc_output" '"address"')"
 	if [ -z "$terminal" ]; then
 		case "$hc_output" in
 		*[!A-Za-z0-9/_-]* | "") ;;
@@ -714,8 +818,7 @@ worktree_of_branch() {
 
 # Prints the subagent.base label in the hc terminal JSON $1, if it has one.
 base_label() {
-	printf '%s\n' "$1" |
-		sed -n 's/.*"subagent\.base"[[:space:]]*:[[:space:]]*"\([^"\\]*\)".*/\1/p' | head -n 1
+	json_get "$1" '"labels"."subagent.base"'
 }
 
 # Deletes branch $1 once merged into a freshly fetched origin/$2: its tip is
@@ -777,8 +880,7 @@ cmd_close() {
 	local listed terminals t got base=""
 	listed="$(hc ls --all --json --label "subagent.repo=$root" --label "subagent.branch=$branch")" ||
 		die 4 "hc ls failed, so hc is not usable; nothing was touched"
-	terminals="$(printf '%s\n' "$listed" | grep -o '"address"[[:space:]]*:[[:space:]]*"[^"]*"' |
-		sed 's/.*"\([^"]*\)"$/\1/')"
+	terminals="$(json_get "$listed" '"terminals"[]."address"')"
 	while IFS= read -r t; do
 		[ -n "$t" ] || continue
 		got="$(hc get "$t" --json)" || die 4 "hc get $t failed; nothing was touched"
