@@ -21,4 +21,12 @@ A Herdr subagent whose harness differs from the parent's harness. It is always l
 
 **Base branch**:
 The branch on `origin` a Herdr subagent's worktree is created from; `main` unless another is given. `start` fetches it and branches from `origin/<base>`; local branches are never written.
-_Avoid_: Source branch, parent branch, Base update (the v1 step that rewrote the local base branch)
+_Avoid_: Source branch, parent branch, Base update (the v1 step that rewrote the local base branch; retired)
+
+**Template**:
+An `hc` template a Herdr subagent is started from: a Markdown file whose frontmatter `command` sets the Harness, model, effort and permissions, and whose body holds the child's fixed rules. A different setup is a different Template.
+_Avoid_: Preset, profile, harness config
+
+**Close**:
+Cleaning up a Herdr subagent: kill and remove its terminal, remove its worktree when it is clean, and delete its branch only once merged into `origin/<base>`. Unmerged work is always kept.
+_Avoid_: Cleanup, teardown, kill (that ends only the terminal's program)
