@@ -292,6 +292,19 @@ has_branch() {
 	has_branch main
 }
 
+@test "a worktree for the branch outside .worktrees/<slug> is refused and nothing is touched" {
+	git worktree add -q --no-track -b feat/b "$SANDBOX/elsewhere" refs/remotes/origin/main
+	with_terminal live
+	run --separate-stderr "$SCRIPT" close feat/b
+	[ "$status" -eq 2 ]
+	[ -z "$output" ]
+	[[ "$stderr" == *"$SANDBOX/elsewhere"* ]] || false
+	[[ "$stderr" == *"$REPO/.worktrees/feat-b"* ]] || false
+	[ ! -e "$HC_LOG/kill-calls" ]
+	[ -d "$SANDBOX/elsewhere" ]
+	has_branch feat/b
+}
+
 @test "close without hc or outside a git repo exits 4 and touches nothing" {
 	make_worktree b
 	rm "$STUBS/hc"

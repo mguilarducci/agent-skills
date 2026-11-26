@@ -105,8 +105,9 @@ origin/<base>, as a merge commit leaves it. Otherwise the branch is kept
 and the JSON says why; a failed fetch keeps it too. The terminal's hc
 record is removed last, so a rerun still knows the base. There is no
 --force. Rerun close after a partial failure to finish, even when only
-the local branch is left. The branch checked out in the main checkout is
-refused (exit 2).
+the local branch is left. close only removes the worktree start creates,
+<main-checkout-root>/.worktrees/<slug(branch)>: a branch checked out in
+the main checkout or in any other worktree is refused (exit 2).
 
 stdout is always one JSON line. start prints:
   {"terminal","name","branch","base","worktree","template","issue",
@@ -130,8 +131,8 @@ Exit codes:
   0    started, task sent                  closed (the branch may be kept)
   1    git or hc failed after work         git or hc failed midway; close
        started; leftovers are printed      again to finish
-  2    usage error, including a bad        usage error, including the
-       label or a TTY or empty stdin       main checkout's branch
+  2    usage error, including a bad        usage error, including a branch
+       label or a TTY or empty stdin       checked out elsewhere
   3    no origin, a failed fetch, or       dirty worktree; nothing touched
        <base> missing on origin
   4    missing git repo, hc, template      missing git repo or hc
@@ -764,6 +765,11 @@ cmd_close() {
 	wt_path="$(worktree_of_branch "$branch")"
 	[ "$wt_path" != "$root" ] ||
 		usage_error "$branch is checked out in the main checkout; close only cleans up a Herdr subagent's worktree"
+	# Only the path start creates; any other worktree is the user's own.
+	local own_path
+	own_path="$root/.worktrees/$(slugify "$branch")"
+	[ -z "$wt_path" ] || [ "$wt_path" = "$own_path" ] ||
+		usage_error "$branch is checked out in $wt_path, not in $own_path; close only cleans up a Herdr subagent's worktree"
 
 	# Finished terminals too: a Herdr subagent ends with its parent.
 	local listed terminals t got base=""

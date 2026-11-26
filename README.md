@@ -96,8 +96,10 @@ tip is an ancestor of `origin/<base>`, as a merge commit leaves it. Otherwise
 the branch is kept and the reason reported; a failed fetch keeps it too. The
 terminal's hc record is removed last, so a rerun still knows the base. There
 is no `--force`, and rerunning `close` after a partial failure finishes the
-cleanup, even when only the local branch is left. The branch checked out in
-the main checkout is refused (exit 2).
+cleanup, even when only the local branch is left. `close` only removes the
+worktree `start` creates, `<main-checkout-root>/.worktrees/<slug(branch)>`: a
+branch checked out in the main checkout or in any other worktree is refused
+(exit 2).
 
 stdout is one JSON line,
 `{"branch","worktree","terminal_killed","worktree_removed","branch_deleted","branch_kept_reason"}`.
@@ -111,7 +113,7 @@ the branch is deleted.
 |---|---|---|
 | 0 | started, task sent | closed (the branch may be kept; see the JSON) |
 | 1 | git or hc failed after work started; leftovers are printed with the commands to remove them | git or hc failed midway; close again to finish |
-| 2 | usage error, including a bad label or a TTY or empty stdin | usage error, including the main checkout's branch |
+| 2 | usage error, including a bad label or a TTY or empty stdin | usage error, including a branch checked out outside its `.worktrees/<slug>` |
 | 3 | no `origin`, a failed fetch, or the base missing on `origin` | dirty worktree; nothing touched |
 | 4 | missing git repo, `hc` (or a failing `hc ls` or `hc templates`), the template, or a live parent | missing git repo or `hc` |
 | 5 | the branch, worktree path or live hc name already exists; pick another branch | no worktree, no labelled terminal and no local branch |
