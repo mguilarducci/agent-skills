@@ -56,7 +56,9 @@ herdr-subagent close feat/login   # once the PR is merged
   `implementer` runs Claude Code with `hc send` and `hc label` pre-allowed.
   `implementer-codex` runs Codex in its workspace-write sandbox with network
   access on: from inside that sandbox `hc` can't reach its core otherwise,
-  and the child needs both `hc send` and `hc label`. A missing template
+  and the child needs both `hc send` and `hc label`. A narrower alternative,
+  untested: keep network access off and add a Codex rule of your own that
+  allows just the `hc send` and `hc label` prefixes. A missing template
   exits 4 and creates nothing.
 - `--parent <t>`: the live hc terminal that gets the reports (default
   `$HC_TERMINAL_ID`). Run it from an hc terminal, under `hc run --bg`, or pass
@@ -64,7 +66,7 @@ herdr-subagent close feat/login   # once the PR is merged
 - Labels: every Herdr subagent gets `subagent.repo` (the main checkout root),
   `subagent.branch` and `subagent.base`. `--issue <n>` (digits only) adds
   `subagent.issue`, and repeatable `--label k=v` adds your own. Keys under
-  `subagent.`, `herdr.` or `where` are reserved (exit 2). Find them with
+  `subagent.`, `herdr.` or `where.`, and `where` itself, are reserved (exit 2). Find them with
   `hc ls --label subagent.repo=<root>`.
 - The task is read only from stdin, byte-for-byte, trailing newlines
   included. Use a quoted heredoc so quotes, `$` and backticks survive:
@@ -76,7 +78,8 @@ herdr-subagent close feat/login   # once the PR is merged
   ```
 
   An empty or whitespace-only task, or stdin attached to a terminal, exits 2.
-- stdout is always one JSON line,
+- On success (exit 0), and for exit 6, stdout is one JSON line; on other
+  failures stdout is empty and stderr explains. The line is
   `{"terminal","name","branch","base","worktree","template","issue","labels","task_sent","reason"}`,
   where `issue` is a number or `null`, `labels` holds every label applied,
   and `reason` is hc's reason when `task_sent` is false and `null`
@@ -88,20 +91,25 @@ herdr-subagent close feat/login   # once the PR is merged
 ### close
 
 `herdr-subagent close <branch>` takes no flags. It finds the terminal by its
-`subagent.repo` and `subagent.branch` labels (a finished one too), kills and
-removes it, and removes the worktree. A worktree with uncommitted or untracked
-changes exits 3 and touches nothing. It then fetches the base (the terminal's
+`subagent.repo` and `subagent.branch` labels (a finished one too), kills it,
+and removes the worktree. A worktree with uncommitted or untracked changes
+exits 3 and touches nothing. It then fetches the base (the terminal's
 `subagent.base` label, else `main`) and deletes the local branch only when its
 tip is an ancestor of `origin/<base>`, as a merge commit leaves it. Otherwise
-the branch is kept and the reason reported; a failed fetch keeps it too. There
+the branch is kept and the reason reported; a failed fetch keeps it too. The
+terminal's hc record is removed last, so a rerun still knows the base. There
 is no `--force`, and rerunning `close` after a partial failure finishes the
-cleanup. The branch checked out in the main checkout is refused (exit 2).
+cleanup, even when only the local branch is left. `close` only removes the
+worktree `start` creates, `<main-checkout-root>/.worktrees/<slug(branch)>`: a
+branch checked out in the main checkout or in any other worktree is refused
+(exit 2).
 
-stdout is one JSON line,
-`{"branch","worktree","terminal_killed","worktree_removed","branch_deleted","branch_kept_reason"}`.
-`worktree` is `null` when none was found, `terminal_killed` is also true when
-a finished terminal was only removed, and `branch_kept_reason` is `null` once
-the branch is deleted.
+On exit 0 (the branch may be kept), stdout is one JSON line; on other
+failures it is empty and stderr explains. The line is
+`{"branch","worktree","terminal_removed","worktree_removed","branch_deleted","branch_kept_reason"}`.
+`worktree` is `null` when none was found, `terminal_removed` is true once the
+terminal's hc record is removed (a live one is killed first), and
+`branch_kept_reason` is `null` once the branch is deleted.
 
 ### Exit codes
 
@@ -109,10 +117,10 @@ the branch is deleted.
 |---|---|---|
 | 0 | started, task sent | closed (the branch may be kept; see the JSON) |
 | 1 | git or hc failed after work started; leftovers are printed with the commands to remove them | git or hc failed midway; close again to finish |
-| 2 | usage error, including a bad label or a TTY or empty stdin | usage error, including the main checkout's branch |
+| 2 | usage error, including a bad label or a TTY or empty stdin | usage error, including a branch checked out outside its `.worktrees/<slug>` |
 | 3 | no `origin`, a failed fetch, or the base missing on `origin` | dirty worktree; nothing touched |
 | 4 | missing git repo, `hc` (or a failing `hc ls` or `hc templates`), the template, or a live parent | missing git repo or `hc` |
-| 5 | the branch, worktree path or live hc name already exists; pick another branch | no worktree and no labelled terminal for that branch |
+| 5 | the branch, worktree path or live hc name already exists; pick another branch | no worktree, no labelled terminal and no local branch |
 | 6 | started, but hc didn't deliver the task (`task_sent: false`, for example a trust dialog); the terminal and worktree are kept: read its screen, then send the task yourself | - |
 | 130 | interrupted | interrupted |
 

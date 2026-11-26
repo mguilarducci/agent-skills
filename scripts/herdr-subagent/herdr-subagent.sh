@@ -51,8 +51,8 @@ start flags:
                     (default: \$HC_TERMINAL_ID).
   --issue <n>       Issue number (digits only), as label subagent.issue.
   --label <k=v>     Extra label, repeatable. Keys use ASCII letters,
-                    digits and . _ -; subagent.*, herdr.* and where are
-                    reserved.
+                    digits and . _ -; subagent.*, herdr.*, where and
+                    where.* are reserved.
 
 close takes one branch and no flags.
 
@@ -83,7 +83,9 @@ copy or link them there:
   implementer-codex  Codex in its workspace-write sandbox with network
                      access on: hc cannot reach its core from inside that
                      sandbox otherwise, and the child needs \`hc send\` and
-                     \`hc label\`.
+                     \`hc label\`. A narrower, untested alternative: a
+                     Codex rule of your own that allows just the
+                     \`hc send\` and \`hc label\` prefixes.
 The script never installs a template; a different setup is a different
 template.
 
@@ -97,29 +99,35 @@ ones. The shipped templates have the child set subagent.pr=<PR URL> when
 it opens a PR.
 
 close: finds the terminal by its subagent.repo and subagent.branch labels
-(a finished one too), kills and removes it, then removes the worktree. A
-worktree with uncommitted or untracked changes exits 3 and touches
-nothing. close fetches the base (the terminal's subagent.base label, else
-main) and deletes the local branch only when its tip is an ancestor of
+(a finished one too), kills it, then removes the worktree. A worktree
+with uncommitted or untracked changes exits 3 and touches nothing. close
+fetches the base (the terminal's subagent.base label, else main) and
+deletes the local branch only when its tip is an ancestor of
 origin/<base>, as a merge commit leaves it. Otherwise the branch is kept
-and the JSON says why; a failed fetch keeps it too. There is no --force.
-Rerun close after a partial failure to finish. The branch checked out in
-the main checkout is refused (exit 2).
+and the JSON says why; a failed fetch keeps it too. The terminal's hc
+record is removed last, so a rerun still knows the base. There is no
+--force. Rerun close after a partial failure to finish, even when only
+the local branch is left. close only removes the worktree start creates,
+<main-checkout-root>/.worktrees/<slug(branch)>: a branch checked out in
+the main checkout or in any other worktree is refused (exit 2).
 
-stdout is always one JSON line. start prints:
+On success (exit 0), and for exit 6, stdout is one JSON line; on other
+failures stdout is empty and stderr explains. start prints:
   {"terminal","name","branch","base","worktree","template","issue",
    "labels","task_sent","reason"}
 issue is a number or null; labels holds every label applied. reason is
 hc's reason when task_sent is false, null otherwise. close prints:
-  {"branch","worktree","terminal_killed","worktree_removed",
+  {"branch","worktree","terminal_removed","worktree_removed",
    "branch_deleted","branch_kept_reason"}
-worktree is null when none was found. terminal_killed is also true when a
-finished terminal was only removed. branch_kept_reason is null once the
-branch is deleted, else one of:
+worktree is null when none was found. terminal_removed is true once the
+hc record is removed (a live terminal is killed first). branch_kept_reason
+is null once the branch is deleted, else one of:
   not merged into origin/<base>; pushed to origin/<branch>
   not merged into origin/<base>; not pushed (its tip is not on origin)
   could not check the merge: <fetch error>
   no local branch <branch>
+When no subagent.base label is left, the first three end in
+" (base unknown, checked against main)".
 stderr carries only progress, errors, leftovers after a failure and one
 final "started" or "closed" line.
 
@@ -128,14 +136,14 @@ Exit codes:
   0    started, task sent                  closed (the branch may be kept)
   1    git or hc failed after work         git or hc failed midway; close
        started; leftovers are printed      again to finish
-  2    usage error, including a bad        usage error, including the
-       label or a TTY or empty stdin       main checkout's branch
+  2    usage error, including a bad        usage error, including a branch
+       label or a TTY or empty stdin       checked out elsewhere
   3    no origin, a failed fetch, or       dirty worktree; nothing touched
        <base> missing on origin
   4    missing git repo, hc, template      missing git repo or hc
        or live parent
-  5    branch, worktree path or live hc    no worktree and no labelled
-       name already exists                 terminal for that branch
+  5    branch, worktree path or live hc    no worktree, no labelled
+       name already exists                 terminal and no local branch
   6    started, but hc did not deliver     -
        the task (task_sent false)
   130  interrupted                         interrupted
@@ -202,6 +210,12 @@ die() {
 	exit "$code"
 }
 
+# Exits 4 unless run inside a git repository with hc on PATH.
+require_repo_and_hc() {
+	git rev-parse --git-dir >/dev/null 2>&1 || die 4 "not inside a git repository"
+	command -v hc >/dev/null 2>&1 || die 4 "hc not found on PATH"
+}
+
 # --- naming ------------------------------------------------------------------
 
 # Each run of chars outside [A-Za-z0-9._-] becomes "-", then "-" is trimmed.
@@ -243,8 +257,7 @@ refuse_taken_names() {
 	# `hc run --name` must be unique among live terminals (plain `hc ls`).
 	local live
 	live="$(hc ls --json)" || die 4 "hc ls failed, so hc is not usable; nothing was created"
-	if printf '%s\n' "$live" | grep -o '"name"[[:space:]]*:[[:space:]]*"[^"]*"' |
-		sed 's/.*"\([^"]*\)"$/\1/' | grep -qxF -- "$hc_name"; then
+	if json_get "$live" '"terminals"[]."name"' | grep -qxF -- "$hc_name"; then
 		exit_name_taken "live hc terminal named $hc_name"
 	fi
 	return 0
@@ -261,16 +274,15 @@ refuse_dead_parent() {
 	[ -n "$parent" ] || die 4 "no parent: $PARENT_HINT; nothing was created"
 	got="$(hc get "$parent" --json 2>/dev/null)" ||
 		die 4 "parent $parent is not a live hc terminal: $PARENT_HINT; nothing was created"
-	printf '%s\n' "$got" | grep -q '"state"[[:space:]]*:[[:space:]]*"live"' ||
+	[ "$(json_get "$got" '"state"')" = "live" ] ||
 		die 4 "parent $parent is not a live hc terminal: $PARENT_HINT; nothing was created"
 }
 
 # --- labels ------------------------------------------------------------------
 
-# Set by add_label: the hc run flags, the JSON object body, the keys seen.
+# Set by add_label: the hc run flags and the JSON object body.
 LABEL_ARGS=()
 LABELS_JSON=""
-LABEL_KEYS=" "
 
 add_label() {
 	local key="$1" value="$2"
@@ -278,7 +290,6 @@ add_label() {
 	LABEL_ARGS[${#LABEL_ARGS[@]}]="$key=$value"
 	[ -z "$LABELS_JSON" ] || LABELS_JSON="$LABELS_JSON,"
 	LABELS_JSON="$LABELS_JSON$(json_str "$key"):$(json_str "$value")"
-	LABEL_KEYS="$LABEL_KEYS$key "
 }
 
 # Exits 2 unless $1 is k=v with a free key: ASCII letters, digits and . _ -
@@ -302,7 +313,7 @@ check_user_label() {
 	esac
 	case "$key" in
 	subagent.* | herdr.* | where | where.*)
-		usage_error "reserved --label key (subagent.*, herdr.* and where are taken): $key"
+		usage_error "reserved --label key (subagent.*, herdr.*, where and where.* are taken): $key"
 		;;
 	esac
 }
@@ -313,11 +324,15 @@ check_user_label() {
 refuse_missing_template() {
 	local name="$1" listed shipped
 	listed="$(hc templates --json)" || die 4 "hc templates failed, so hc is not usable; nothing was created"
-	# Compared as JSON text, so names with quotes or backslashes match too.
-	if printf '%s\n' "$listed" | sed 's/"name"[[:space:]]*:[[:space:]]*/"name":/g' |
-		grep -qF -- "\"name\":$(json_str "$name")"; then
-		return 0
-	fi
+	# Raw JSON strings fit on one line; each is decoded on its own, so a name
+	# with a newline or any escape still matches exactly.
+	local tok
+	while IFS= read -r tok; do
+		[ -n "$tok" ] || continue
+		[ "$(json_get "$tok" "" && printf .)" != "$name"$'\n.' ] || return 0
+	done <<EOF
+$(json_raw "$listed" '"templates"[]."name"')
+EOF
 	shipped="$(cd "$(dirname "$0")" && pwd -P)/templates"
 	say "template not found: $name (hc templates does not list it); nothing was created"
 	say "templates go in ~/.config/herdr-core/templates/$name.md; copy or link one from $shipped"
@@ -327,39 +342,25 @@ refuse_missing_template() {
 # Reads hc run's first_message record. Sets TASK_SENT (true/false),
 # REASON_JSON (a JSON string or null) and REASON_TEXT (for stderr).
 read_first_message() {
-	local rest
 	TASK_SENT="false" REASON_JSON="null" REASON_TEXT=""
-	case "$1" in
-	*'"first_message"'*) ;;
-	*)
+	if [ -z "$(json_raw "$1" '"first_message"')" ]; then
 		REASON_TEXT="hc did not report whether the task was sent"
 		REASON_JSON="$(json_str "$REASON_TEXT")"
 		return 0
-		;;
+	fi
+	if [ "$(json_raw "$1" '"first_message"."sent"')" = "true" ]; then
+		TASK_SENT="true"
+		return 0
+	fi
+	# hc's reason is already a JSON value: passed on as written.
+	REASON_JSON="$(json_raw "$1" '"first_message"."reason"')"
+	case "$REASON_JSON" in
+	"" | "{" | "[") REASON_JSON="null" ;;
 	esac
-	# The first "sent" and "reason" keys after "first_message" are its own.
-	rest="${1#*\"first_message\"}"
-	case "$rest" in
-	*'"sent"'*)
-		if printf '%s' "${rest#*\"sent\"}" | grep -Eq '^[[:space:]]*:[[:space:]]*true'; then
-			TASK_SENT="true"
-			return 0
-		fi
-		;;
-	esac
-	case "$rest" in
-	*'"reason"'*)
-		REASON_JSON="$(printf '%s' "${rest#*\"reason\"}" |
-			sed -nE '1s/^[[:space:]]*:[[:space:]]*("([^"\\]|\\.)*"|null).*/\1/p')"
-		;;
-	esac
-	[ -n "$REASON_JSON" ] || REASON_JSON="null"
 	if [ "$REASON_JSON" = "null" ]; then
 		REASON_TEXT="hc gave no reason"
 	else
-		REASON_TEXT="${REASON_JSON#\"}"
-		REASON_TEXT="${REASON_TEXT%\"}"
-		REASON_TEXT="$(printf '%s' "$REASON_TEXT" | sed -e 's/\\"/"/g' -e 's/\\\\/\\/g')"
+		REASON_TEXT="$(json_get "$1" '"first_message"."reason"')"
 	fi
 }
 
@@ -389,25 +390,25 @@ main_checkout() {
 
 # --- leftovers ---------------------------------------------------------------
 
-# Set once work starts; used to report what was left behind on failure.
+# Set once the name checks pass, so neither existed before this run; used to
+# report what was left behind on failure.
 WT_PATH=""
 BRANCH=""
-BRANCH_EXISTED=1
-PATH_EXISTED=1
 
 print_leftovers() {
 	local left=0
-	if [ "$PATH_EXISTED" -eq 0 ] && [ -n "$WT_PATH" ] && [ -e "$WT_PATH" ]; then
+	if [ -n "$WT_PATH" ] && [ -e "$WT_PATH" ]; then
 		say "worktree left at $WT_PATH"
 		printf '  ' >&2
 		shell_line git worktree remove "$WT_PATH" >&2
 		left=1
 	fi
-	if [ "$BRANCH_EXISTED" -eq 0 ] && [ -n "$BRANCH" ] &&
-		git show-ref --verify --quiet "refs/heads/$BRANCH" 2>/dev/null; then
+	# close deletes the branch once merged; git branch -d can refuse when the
+	# main checkout is behind origin/<base>.
+	if [ -n "$BRANCH" ] && git show-ref --verify --quiet "refs/heads/$BRANCH" 2>/dev/null; then
 		[ "$left" -eq 1 ] || say "branch left behind: $BRANCH"
 		printf '  ' >&2
-		shell_line git branch -d "$BRANCH" >&2
+		shell_line "$PROG" close "$BRANCH" >&2
 	fi
 }
 
@@ -489,6 +490,121 @@ json_str() {
 		;;
 	esac
 	printf '"%s"' "$s"
+}
+
+# Reads hc's JSON without jq. A path is keys as JSON strings joined by "."
+# with "[]" for any array element: '"terminals"[]."name"'. Matching is exact,
+# so the same key in a nested object never matches. Prints one value per
+# line: JSON strings decoded, other scalars as written; objects and arrays
+# print "{" or "[" (enough to test that a key is there). Prints nothing
+# unless the whole input is one valid JSON value.
+# shellcheck disable=SC2016 # an awk program: $0 is awk's, not the shell's
+JSON_AWK='
+function ws() {
+	while (pos <= n && index(" \t\n\r", substr(s, pos, 1))) pos++
+}
+function str(   start, c) {
+	start = pos++
+	while (pos <= n) {
+		c = substr(s, pos, 1)
+		if (c == "\\") pos += 2
+		else if (c == "\"") return substr(s, start, ++pos - start)
+		else pos++
+	}
+	bad = 1
+	return ""
+}
+function hit(path, tok) {
+	if (path == want) out = out (raw ? tok : dec(tok)) "\n"
+}
+function value(path,   c, key, rest) {
+	ws()
+	c = substr(s, pos, 1)
+	if (c == "{" || c == "[") {
+		hit(path, c)
+		pos++
+		ws()
+		if (substr(s, pos, 1) == (c == "{" ? "}" : "]")) { pos++; return }
+		while (!bad) {
+			if (c == "{") {
+				ws()
+				if (substr(s, pos, 1) != "\"") { bad = 1; return }
+				key = str()
+				ws()
+				if (substr(s, pos++, 1) != ":") { bad = 1; return }
+				value(path == "" ? key : path "." key)
+			} else value(path "[]")
+			ws()
+			rest = substr(s, pos++, 1)
+			if (rest == ",") continue
+			if (rest != (c == "{" ? "}" : "]")) bad = 1
+			return
+		}
+	} else if (c == "\"") {
+		hit(path, str())
+	} else if (match(substr(s, pos), /^(true|false|null|-?[0-9][0-9.eE+-]*)/)) {
+		hit(path, substr(s, pos, RLENGTH))
+		pos += RLENGTH
+	} else bad = 1
+}
+function hex(h,   i, v) {
+	v = 0
+	for (i = 1; i <= 4; i++) v = v * 16 + index("0123456789abcdef", tolower(substr(h, i, 1))) - 1
+	return v
+}
+function utf8(cp) {
+	if (cp < 128) return cp ? sprintf("%c", cp) : ""
+	if (cp < 2048) return sprintf("%c%c", 192 + int(cp / 64), 128 + cp % 64)
+	if (cp < 65536) return sprintf("%c%c%c", 224 + int(cp / 4096), 128 + int(cp / 64) % 64, 128 + cp % 64)
+	return sprintf("%c%c%c%c", 240 + int(cp / 262144), 128 + int(cp / 4096) % 64, 128 + int(cp / 64) % 64, 128 + cp % 64)
+}
+function dec(tok,   o, i, c, e, cp, lo) {
+	if (substr(tok, 1, 1) != "\"") return tok
+	tok = substr(tok, 2, length(tok) - 2)
+	o = ""
+	for (i = 1; i <= length(tok); i++) {
+		c = substr(tok, i, 1)
+		if (c != "\\") { o = o c; continue }
+		e = substr(tok, ++i, 1)
+		if (e == "n") o = o "\n"
+		else if (e == "t") o = o "\t"
+		else if (e == "r") o = o "\r"
+		else if (e == "b") o = o "\b"
+		else if (e == "f") o = o "\f"
+		else if (e == "u") {
+			cp = hex(substr(tok, i + 1, 4))
+			i += 4
+			if (cp >= 55296 && cp < 56320 && substr(tok, i + 1, 2) == "\\u") {
+				lo = hex(substr(tok, i + 3, 4))
+				if (lo >= 56320 && lo < 57344) {
+					cp = 65536 + (cp - 55296) * 1024 + (lo - 56320)
+					i += 6
+				}
+			}
+			o = o utf8(cp)
+		} else o = o e
+	}
+	return o
+}
+{ s = s $0 "\n" }
+END {
+	want = ENVIRON["JSON_PATH"]
+	raw = ENVIRON["JSON_RAW"] == 1
+	n = length(s)
+	pos = 1
+	value("")
+	ws()
+	if (!bad && pos > n) printf "%s", out
+}'
+
+# json_get <json> <path>: the decoded values at <path>, one per line.
+json_get() {
+	printf '%s\n' "$1" | JSON_PATH="$2" JSON_RAW=0 LC_ALL=C awk "$JSON_AWK"
+}
+
+# json_raw <json> <path>: the values at <path> as JSON text, one per line.
+json_raw() {
+	printf '%s\n' "$1" | JSON_PATH="$2" JSON_RAW=1 LC_ALL=C awk "$JSON_AWK"
 }
 
 # --- shell quoting -----------------------------------------------------------
@@ -621,8 +737,7 @@ cmd_start() {
 	hc_name="$(hc_name_for "$slug")"
 	[ -n "$hc_name" ] || usage_error "branch name gives an empty hc name: $branch"
 
-	git rev-parse --git-dir >/dev/null 2>&1 || die 4 "not inside a git repository"
-	command -v hc >/dev/null 2>&1 || die 4 "hc not found on PATH"
+	require_repo_and_hc
 	refuse_dead_parent "$parent"
 	refuse_missing_template "$template"
 
@@ -642,16 +757,12 @@ cmd_start() {
 		add_label "${label%%=*}" "${label#*=}"
 	done
 
-	# After the name-conflict checks; Ctrl-C leaves git as git leaves it.
-	trap on_interrupt INT
-	fetch_origin_base "$base"
-
-	# Work starts here: from now on, failures may leave things behind.
+	# After the name-conflict checks, so neither the branch nor the path
+	# existed; Ctrl-C leaves git as git leaves it.
 	WT_PATH="$wt_path"
 	BRANCH="$branch"
-	if git show-ref --verify --quiet "refs/heads/$branch"; then BRANCH_EXISTED=1; else BRANCH_EXISTED=0; fi
-	if [ -e "$wt_path" ]; then PATH_EXISTED=1; else PATH_EXISTED=0; fi
 	trap on_interrupt INT
+	fetch_origin_base "$base"
 
 	say "creating worktree $wt_path on new branch $branch from origin/$base"
 	git worktree add -q --no-track -b "$branch" "$wt_path" "refs/remotes/origin/$base" >&2 ||
@@ -666,7 +777,7 @@ cmd_start() {
 
 	# Piped, hc prints JSON; take its "address". Fall back to a bare id.
 	local terminal
-	terminal="$(printf '%s\n' "$hc_output" | sed -n 's/.*"address"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+	terminal="$(json_get "$hc_output" '"address"')"
 	if [ -z "$terminal" ]; then
 		case "$hc_output" in
 		*[!A-Za-z0-9/_-]* | "") ;;
@@ -709,8 +820,7 @@ worktree_of_branch() {
 
 # Prints the subagent.base label in the hc terminal JSON $1, if it has one.
 base_label() {
-	printf '%s\n' "$1" |
-		sed -n 's/.*"subagent\.base"[[:space:]]*:[[:space:]]*"\([^"\\]*\)".*/\1/p' | head -n 1
+	json_get "$1" '"labels"."subagent.base"'
 }
 
 # Deletes branch $1 once merged into a freshly fetched origin/$2: its tip is
@@ -753,8 +863,7 @@ cmd_close() {
 	command -v git >/dev/null 2>&1 || die 4 "git not found on PATH"
 	git check-ref-format --branch "$branch" >/dev/null 2>&1 ||
 		usage_error "invalid branch name: $branch"
-	git rev-parse --git-dir >/dev/null 2>&1 || die 4 "not inside a git repository"
-	command -v hc >/dev/null 2>&1 || die 4 "hc not found on PATH"
+	require_repo_and_hc
 
 	# Everything is looked up before anything is touched.
 	local root wt_path
@@ -762,22 +871,36 @@ cmd_close() {
 	wt_path="$(worktree_of_branch "$branch")"
 	[ "$wt_path" != "$root" ] ||
 		usage_error "$branch is checked out in the main checkout; close only cleans up a Herdr subagent's worktree"
+	# Only the path start creates; any other worktree is the user's own.
+	local own_path
+	own_path="$root/.worktrees/$(slugify "$branch")"
+	[ -z "$wt_path" ] || [ "$wt_path" = "$own_path" ] ||
+		usage_error "$branch is checked out in $wt_path, not in $own_path; close only cleans up a Herdr subagent's worktree"
 
 	# Finished terminals too: a Herdr subagent ends with its parent.
 	local listed terminals t got base=""
 	listed="$(hc ls --all --json --label "subagent.repo=$root" --label "subagent.branch=$branch")" ||
 		die 4 "hc ls failed, so hc is not usable; nothing was touched"
-	terminals="$(printf '%s\n' "$listed" | grep -o '"address"[[:space:]]*:[[:space:]]*"[^"]*"' |
-		sed 's/.*"\([^"]*\)"$/\1/')"
-	for t in $terminals; do
+	terminals="$(json_get "$listed" '"terminals"[]."address"')"
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
 		got="$(hc get "$t" --json)" || die 4 "hc get $t failed; nothing was touched"
 		[ -n "$base" ] || base="$(base_label "$got")"
-	done
-	# With no terminal record left, the base falls back to main.
-	[ -n "$base" ] || base="main"
+	done <<EOF
+$terminals
+EOF
+	# With no base label left, the base falls back to main, and says so.
+	local fallback=""
+	if [ -z "$base" ]; then
+		base="main"
+		fallback=" (base unknown, checked against main)"
+	fi
 
-	if [ -z "$wt_path" ] && [ -z "$terminals" ]; then
-		say "no worktree and no labelled hc terminal for branch $branch"
+	# A local branch alone is still work to finish: a rerun after a failed
+	# delete finds no worktree and maybe no terminal.
+	if [ -z "$wt_path" ] && [ -z "$terminals" ] &&
+		! git show-ref --verify --quiet "refs/heads/$branch"; then
+		say "no worktree, no labelled hc terminal and no local branch $branch"
 		exit 5
 	fi
 
@@ -787,14 +910,17 @@ cmd_close() {
 		exit 3
 	fi
 
-	local killed=false removed=false deleted=false kept_json=null wt_json=null
-	for t in $terminals; do
+	local term_removed=false removed=false deleted=false kept_json=null wt_json=null
+	# Kill first and hc rm last: until the end, the terminal record keeps the
+	# subagent.base label a rerun needs.
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
 		say "killing terminal $t"
 		# hc kill waits for the program to end, and succeeds once it has.
 		hc kill "$t" --json >/dev/null || die 1 "hc kill $t failed; close again to finish"
-		hc rm "$t" --json >/dev/null || die 1 "hc rm $t failed; close again to finish"
-		killed=true
-	done
+	done <<EOF
+$terminals
+EOF
 
 	if [ -n "$wt_path" ]; then
 		say "removing worktree $wt_path"
@@ -812,11 +938,24 @@ cmd_close() {
 	if [ -z "$KEPT" ]; then
 		deleted=true
 	else
+		case "$KEPT" in
+		"no local branch "*) ;;
+		*) KEPT="$KEPT$fallback" ;;
+		esac
 		kept_json="$(json_str "$KEPT")"
 	fi
 
-	printf '{"branch":%s,"worktree":%s,"terminal_killed":%s,"worktree_removed":%s,"branch_deleted":%s,"branch_kept_reason":%s}\n' \
-		"$(json_str "$branch")" "$wt_json" "$killed" "$removed" "$deleted" "$kept_json"
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
+		say "removing terminal $t"
+		hc rm "$t" --json >/dev/null || die 1 "hc rm $t failed; close again to finish"
+		term_removed=true
+	done <<EOF
+$terminals
+EOF
+
+	printf '{"branch":%s,"worktree":%s,"terminal_removed":%s,"worktree_removed":%s,"branch_deleted":%s,"branch_kept_reason":%s}\n' \
+		"$(json_str "$branch")" "$wt_json" "$term_removed" "$removed" "$deleted" "$kept_json"
 	say "closed $branch"
 }
 

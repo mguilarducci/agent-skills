@@ -86,7 +86,8 @@ setup() {
 	[ -z "$output" ]
 	[ -d "$REPO/.worktrees/feat-x" ]
 	[[ "$stderr" == *"git worktree remove $REPO/.worktrees/feat-x"* ]] || false
-	[[ "$stderr" == *"git branch -d feat/x"* ]] || false
+	[[ "$stderr" == *"herdr-subagent close feat/x"* ]] || false
+	[[ "$stderr" != *"git branch -d"* ]] || false
 }
 
 @test "cleanup commands quote a worktree path with spaces, so they work when pasted" {
@@ -95,8 +96,10 @@ setup() {
 	HC_STUB_EXIT=3 HC_STUB_OUTPUT="" run --separate-stderr "$SCRIPT" start --branch feat/x <<<"task"
 	[ "$status" -eq 1 ]
 	[[ "$stderr" == *"git worktree remove '$SANDBOX/my repo/.worktrees/feat-x'"* ]] || false
-	printf '%s\n' "$stderr" | sed -n 's/^  \(git .*\)$/\1/p' >"$SANDBOX/cleanup"
-	[ "$(wc -l <"$SANDBOX/cleanup" | tr -d ' ')" = "2" ]
+	# The close hint runs this script, as an installed herdr-subagent would.
+	printf 'herdr-subagent() { "%s" "$@"; }\n' "$SCRIPT" >"$SANDBOX/cleanup"
+	printf '%s\n' "$stderr" | sed -n 's/^  \(git .*\)$/\1/p; s/^  \(herdr-subagent .*\)$/\1/p' >>"$SANDBOX/cleanup"
+	[ "$(wc -l <"$SANDBOX/cleanup" | tr -d ' ')" = "3" ]
 	/bin/bash -e "$SANDBOX/cleanup"
 	[ ! -e "$SANDBOX/my repo/.worktrees/feat-x" ]
 	run git show-ref --verify --quiet refs/heads/feat/x
@@ -123,6 +126,7 @@ STUB
 	run --separate-stderr "$SCRIPT" start --branch b <<<"task"
 	[ "$status" -eq 1 ]
 	[ ! -e "$HC_LOG/argc" ]
+	[[ "$stderr" != *"herdr-subagent close"* ]] || false
 	[[ "$stderr" != *"git branch -d"* ]] || false
 	run git show-ref --verify --quiet refs/heads/b
 	[ "$status" -ne 0 ]

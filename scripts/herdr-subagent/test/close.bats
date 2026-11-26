@@ -54,7 +54,7 @@ has_branch() {
 	with_terminal live
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":true,"worktree_removed":true,"branch_deleted":true,"branch_kept_reason":null}' ]
+	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_removed":true,"worktree_removed":true,"branch_deleted":true,"branch_kept_reason":null}' ]
 	[ "$(cat "$HC_LOG/kill-calls")" = "kill t5 --json" ]
 	[ "$(cat "$HC_LOG/rm-calls")" = "rm t5 --json" ]
 	grep -qxF -- "ls --all --json --label subagent.repo=$REPO --label subagent.branch=b" "$HC_LOG/ls-calls"
@@ -68,7 +68,7 @@ has_branch() {
 	with_terminal live
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":true,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"not merged into origin/main; pushed to origin/b"}' ]
+	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_removed":true,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"not merged into origin/main; pushed to origin/b"}' ]
 	[ ! -e "$REPO/.worktrees/b" ]
 	has_branch b
 }
@@ -80,7 +80,7 @@ has_branch() {
 	with_terminal live
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":true,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"not merged into origin/main; not pushed (its tip is not on origin)"}' ]
+	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_removed":true,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"not merged into origin/main; not pushed (its tip is not on origin)"}' ]
 	[ ! -e "$REPO/.worktrees/b" ]
 	has_branch b
 }
@@ -93,7 +93,7 @@ has_branch() {
 	git remote set-url origin "$SANDBOX/gone.git"
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":true,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"could not check the merge: git fetch origin main failed"}' ]
+	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_removed":true,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"could not check the merge: git fetch origin main failed"}' ]
 	[ "$(cat "$HC_LOG/rm-calls")" = "rm t5 --json" ]
 	[ ! -e "$REPO/.worktrees/b" ]
 	has_branch b
@@ -105,7 +105,7 @@ has_branch() {
 	git remote remove origin
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":false,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"could not check the merge: no origin remote"}' ]
+	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_removed":false,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"could not check the merge: no origin remote (base unknown, checked against main)"}' ]
 	has_branch b
 }
 
@@ -116,7 +116,7 @@ has_branch() {
 	with_terminal finished develop
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":true,"worktree_removed":true,"branch_deleted":true,"branch_kept_reason":null}' ]
+	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_removed":true,"worktree_removed":true,"branch_deleted":true,"branch_kept_reason":null}' ]
 	[ "$(cat "$HC_LOG/get-calls")" = "get t5 --json" ]
 }
 
@@ -127,7 +127,7 @@ has_branch() {
 	with_terminal live main
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":true,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"not merged into origin/main; pushed to origin/b"}' ]
+	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_removed":true,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"not merged into origin/main; pushed to origin/b"}' ]
 }
 
 @test "without a terminal record the base falls back to main" {
@@ -137,7 +137,7 @@ has_branch() {
 	no_terminal
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":false,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"not merged into origin/main; pushed to origin/b"}' ]
+	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_removed":false,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"not merged into origin/main; pushed to origin/b (base unknown, checked against main)"}' ]
 	[ ! -e "$HC_LOG/kill-calls" ]
 	[ ! -e "$HC_LOG/rm-calls" ]
 
@@ -145,7 +145,16 @@ has_branch() {
 	merge_on_origin c
 	run --separate-stderr "$SCRIPT" close c
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"c","worktree":"'"$REPO"'/.worktrees/c","terminal_killed":false,"worktree_removed":true,"branch_deleted":true,"branch_kept_reason":null}' ]
+	[ "$output" = '{"branch":"c","worktree":"'"$REPO"'/.worktrees/c","terminal_removed":false,"worktree_removed":true,"branch_deleted":true,"branch_kept_reason":null}' ]
+}
+
+@test "a terminal without a base label: the kept reason says main was a fallback" {
+	make_worktree b
+	git push -q origin b
+	with_terminal live -
+	run --separate-stderr "$SCRIPT" close b
+	[ "$status" -eq 0 ]
+	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_removed":true,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"not merged into origin/main; pushed to origin/b (base unknown, checked against main)"}' ]
 }
 
 @test "uncommitted or untracked changes exit 3 and touch nothing" {
@@ -186,7 +195,7 @@ has_branch() {
 	with_terminal finished
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":null,"terminal_killed":true,"worktree_removed":false,"branch_deleted":true,"branch_kept_reason":null}' ]
+	[ "$output" = '{"branch":"b","worktree":null,"terminal_removed":true,"worktree_removed":false,"branch_deleted":true,"branch_kept_reason":null}' ]
 	[ "$(cat "$HC_LOG/rm-calls")" = "rm t5 --json" ]
 }
 
@@ -194,22 +203,70 @@ has_branch() {
 	make_worktree b
 	merge_on_origin b
 	with_terminal live
-	export HC_STUB_RM_EXIT=1
+	export HC_STUB_KILL_EXIT=1
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 1 ]
 	[ -z "$output" ]
 	[ -d "$REPO/.worktrees/b" ]
 	has_branch b
 
+	# hc rm is the last step: everything else is done when it fails.
+	export HC_STUB_KILL_EXIT=0 HC_STUB_RM_EXIT=1
+	run --separate-stderr "$SCRIPT" close b
+	[ "$status" -eq 1 ]
+	[ -z "$output" ]
+	[ ! -e "$REPO/.worktrees/b" ]
+	run ! has_branch b
+
 	export HC_STUB_RM_EXIT=0
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":true,"worktree_removed":true,"branch_deleted":true,"branch_kept_reason":null}' ]
+	[ "$output" = '{"branch":"b","worktree":null,"terminal_removed":true,"worktree_removed":false,"branch_deleted":false,"branch_kept_reason":"no local branch b"}' ]
 
 	# The terminal record is gone now; a third close finds nothing.
 	no_terminal
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 5 ]
+}
+
+@test "a failed branch delete: the hc record is kept, and a rerun finishes even with only the branch left" {
+	make_worktree b
+	merge_on_origin b
+	with_terminal live
+	# A held ref lock makes `git branch -D` fail.
+	: >"$REPO/.git/refs/heads/b.lock"
+	run --separate-stderr "$SCRIPT" close b
+	[ "$status" -eq 1 ]
+	[ -z "$output" ]
+	[ "$(cat "$HC_LOG/kill-calls")" = "kill t5 --json" ]
+	# hc rm comes last, so the terminal record (and its base label) survives.
+	[ ! -e "$HC_LOG/rm-calls" ]
+	[ ! -e "$REPO/.worktrees/b" ]
+	has_branch b
+
+	rm "$REPO/.git/refs/heads/b.lock"
+	no_terminal
+	run --separate-stderr "$SCRIPT" close b
+	[ "$status" -eq 0 ]
+	[ "$output" = '{"branch":"b","worktree":null,"terminal_removed":false,"worktree_removed":false,"branch_deleted":true,"branch_kept_reason":null}' ]
+	run ! has_branch b
+}
+
+@test "a rerun after a failed branch delete still uses the base label" {
+	git push -q origin main:develop
+	make_worktree b
+	merge_on_origin b develop
+	with_terminal live develop
+	: >"$REPO/.git/refs/heads/b.lock"
+	run --separate-stderr "$SCRIPT" close b
+	[ "$status" -eq 1 ]
+	[ ! -e "$HC_LOG/rm-calls" ]
+
+	rm "$REPO/.git/refs/heads/b.lock"
+	run --separate-stderr "$SCRIPT" close b
+	[ "$status" -eq 0 ]
+	[ "$output" = '{"branch":"b","worktree":null,"terminal_removed":true,"worktree_removed":false,"branch_deleted":true,"branch_kept_reason":null}' ]
+	[ "$(cat "$HC_LOG/rm-calls")" = "rm t5 --json" ]
 }
 
 @test "close works from a linked worktree too" {
@@ -242,6 +299,19 @@ has_branch() {
 	run --separate-stderr "$SCRIPT" close main
 	[ "$status" -eq 2 ]
 	has_branch main
+}
+
+@test "a worktree for the branch outside .worktrees/<slug> is refused and nothing is touched" {
+	git worktree add -q --no-track -b feat/b "$SANDBOX/elsewhere" refs/remotes/origin/main
+	with_terminal live
+	run --separate-stderr "$SCRIPT" close feat/b
+	[ "$status" -eq 2 ]
+	[ -z "$output" ]
+	[[ "$stderr" == *"$SANDBOX/elsewhere"* ]] || false
+	[[ "$stderr" == *"$REPO/.worktrees/feat-b"* ]] || false
+	[ ! -e "$HC_LOG/kill-calls" ]
+	[ -d "$SANDBOX/elsewhere" ]
+	has_branch feat/b
 }
 
 @test "close without hc or outside a git repo exits 4 and touches nothing" {
