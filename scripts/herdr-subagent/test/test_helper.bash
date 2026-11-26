@@ -1,5 +1,5 @@
 # Shared setup for herdr-subagent bats tests.
-# Tests drive the script as a process: stubbed `hc`/`claude` on PATH and a
+# Tests drive the script as a process: a stubbed `hc` on PATH and a
 # throwaway git repo with a bare origin. The real `hc` is never reachable.
 
 bats_require_minimum_version 1.5.0
@@ -17,8 +17,19 @@ setup_sandbox() {
 	# prints $HC_STUB_OUTPUT and exits with $HC_STUB_EXIT.
 	# `hc ls` is answered from $HC_STUB_LS (default: no terminals) and only
 	# counted in $HC_LOG/ls-calls, so it never clobbers the `hc run` argv.
+	# `hc templates` is answered from $HC_STUB_TEMPLATES (default: implementer
+	# and implementer-codex) and only counted in $HC_LOG/templates-calls.
 	cat >"$STUBS/hc" <<'STUB'
 #!/bin/bash
+if [ "${1:-}" = "templates" ]; then
+	printf '%s\n' "$*" >>"$HC_LOG/templates-calls"
+	if [ -n "${HC_STUB_TEMPLATES+x}" ]; then
+		printf '%s\n' "$HC_STUB_TEMPLATES"
+	else
+		printf '%s\n' '{"templates":[{"name":"implementer","description":"d","command":"claude","error":null},{"name":"implementer-codex","description":"d","command":"codex --no-daemon","error":null}]}'
+	fi
+	exit "${HC_STUB_TEMPLATES_EXIT:-0}"
+fi
 if [ "${1:-}" = "ls" ]; then
 	printf '%s\n' "$*" >>"$HC_LOG/ls-calls"
 	if [ -n "${HC_STUB_LS+x}" ]; then
@@ -37,12 +48,11 @@ printf '%s\n' "$n" >"$HC_LOG/argc"
 if [ -n "${HC_STUB_OUTPUT+x}" ]; then
 	printf '%s\n' "$HC_STUB_OUTPUT"
 else
-	printf '%s\n' '{"address":"t9z","name":"stub","state":"live"}'
+	printf '%s\n' '{"address":"t9z","name":"stub","state":"live","first_message":{"sent":true,"reason":null,"started":true,"turn":1}}'
 fi
 exit "${HC_STUB_EXIT:-0}"
 STUB
-	printf '#!/bin/bash\nexit 0\n' >"$STUBS/claude"
-	chmod +x "$STUBS/hc" "$STUBS/claude"
+	chmod +x "$STUBS/hc"
 
 	export HC_LOG
 	export PATH="$STUBS:/usr/bin:/bin"

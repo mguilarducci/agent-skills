@@ -62,14 +62,6 @@ setup() {
 	assert_nothing_created
 }
 
-@test "no claude on PATH exits 4" {
-	rm "$STUBS/claude"
-	run --separate-stderr "$SCRIPT" start --branch b <<<"task"
-	[ "$status" -eq 4 ]
-	[[ "$stderr" == *"claude"* ]] || false
-	assert_nothing_created
-}
-
 @test "unset HC_TERMINAL_ID exits 4" {
 	unset HC_TERMINAL_ID
 	run --separate-stderr "$SCRIPT" start --branch b <<<"task"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# The task from stdin and the JSON line on stdout, with hc and claude stubbed.
+# The task from stdin and the JSON line on stdout, with hc stubbed.
 
 load test_helper
 
@@ -8,37 +8,26 @@ setup() {
 	WT="$REPO/.worktrees/b"
 }
 
-# The report-back text the script appends after the task.
-report_text() {
-	printf '%s\n%s\n%s' \
-		"Work only in this worktree ($WT, branch b). Do not start other agents." \
-		'Report with hc send tparent "<result or blocker>" when done or stuck, not just to acknowledge.' \
-		"Write long answers to a file and send its path."
-}
-
-# The last hc argv element: the text handed to the harness.
-hc_text() {
-	hc_arg "$(cat "$HC_LOG/argc")"
+# The file holding the last hc argv element: the task handed to the template.
+hc_task_file() {
+	printf '%s' "$HC_LOG/arg.$(cat "$HC_LOG/argc")"
 }
 
 @test "a multi-line task with quotes, \$ and backticks on stdin is passed byte-for-byte" {
-	run --separate-stderr "$SCRIPT" start --branch b <<'EOF'
+	cat >"$SANDBOX/task.txt" <<'EOF'
 Fix "the" parser's $HOME handling.
 Run `make test` and \n keep 'it' green.
 EOF
+	run --separate-stderr "$SCRIPT" start --branch b <"$SANDBOX/task.txt"
 	[ "$status" -eq 0 ]
-	expected="$(printf '%s\n%s\n\n\n%s' \
-		"Fix \"the\" parser's \$HOME handling." \
-		"Run \`make test\` and \\n keep 'it' green." \
-		"$(report_text)")"
-	[ "$(hc_text)" = "$expected" ]
+	cmp "$(hc_task_file)" "$SANDBOX/task.txt"
 }
 
 @test "the stdin task keeps every trailing newline, and works without one" {
 	printf 'ends with two\n\n' >"$SANDBOX/task.txt"
 	run --separate-stderr "$SCRIPT" start --branch b <"$SANDBOX/task.txt"
 	[ "$status" -eq 0 ]
-	[ "$(hc_text)" = "$(printf 'ends with two\n\n\n\n%s' "$(report_text)")" ]
+	cmp "$(hc_task_file)" "$SANDBOX/task.txt"
 
 	rm -rf "$WT" "${HC_LOG:?}"/*
 	git worktree prune
@@ -46,7 +35,7 @@ EOF
 	printf 'no newline' >"$SANDBOX/task.txt"
 	run --separate-stderr "$SCRIPT" start --branch b <"$SANDBOX/task.txt"
 	[ "$status" -eq 0 ]
-	[ "$(hc_text)" = "$(printf 'no newline\n\n%s' "$(report_text)")" ]
+	cmp "$(hc_task_file)" "$SANDBOX/task.txt"
 }
 
 @test "an empty or whitespace-only stdin exits 2 and creates nothing" {
@@ -70,12 +59,12 @@ EOF
 	assert_nothing_created
 }
 
-@test "stdout is one JSON line with model null when --model is left out" {
+@test "stdout is one JSON line with the template and task_sent, and no harness or model" {
 	run --separate-stderr "$SCRIPT" start --branch b <<<"task"
 	[ "$status" -eq 0 ]
 	[ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" = "1" ]
 	[ "$(printf '%s' "$output" | jq -c .)" = "$(jq -nc --arg wt "$WT" \
-		'{terminal:"t9z",name:"b",branch:"b",base:"main",worktree:$wt,harness:"claude",model:null}')" ]
+		'{terminal:"t9z",name:"b",branch:"b",base:"main",worktree:$wt,template:"implementer",task_sent:true,reason:null}')" ]
 }
 
 @test "stderr has progress and one started line, and no summary or hints" {
@@ -91,15 +80,17 @@ EOF
 	[ "$(printf '%s\n' "$stderr" | grep -vc '^herdr-subagent: ')" = 0 ]
 }
 
-@test "the JSON escapes \" and \\ in the base and worktree path, and control chars in the model" {
+@test "the JSON escapes \" and \\ in the base and worktree path, and control chars in the template" {
 	odd="$SANDBOX/re\"po\\x"
 	git clone -q "$SANDBOX/origin.git" "$odd" 2>/dev/null
 	cd "$odd"
 	git branch 'we"ird' main
-	model="$(printf 'a"b\\c\td\001e')"
-	run --separate-stderr "$SCRIPT" start --harness claude --model "$model" \
+	tpl="$(printf 'a"b\\c\td\001e')"
+	export HC_STUB_TEMPLATES
+	HC_STUB_TEMPLATES="$(jq -nc --arg n "$tpl" '{templates:[{name:$n,description:"d",command:"c"}]}')"
+	run --separate-stderr "$SCRIPT" start --template "$tpl" \
 		--no-base-update --base 'we"ird' --branch b <<<"task"
 	[ "$status" -eq 0 ]
-	[ "$(printf '%s' "$output" | jq -c .)" = "$(jq -nc --arg wt "$odd/.worktrees/b" --arg m "$model" \
-		'{terminal:"t9z",name:"b",branch:"b",base:"we\"ird",worktree:$wt,harness:"claude",model:$m}')" ]
+	[ "$(printf '%s' "$output" | jq -c .)" = "$(jq -nc --arg wt "$odd/.worktrees/b" --arg t "$tpl" \
+		'{terminal:"t9z",name:"b",branch:"b",base:"we\"ird",worktree:$wt,template:$t,task_sent:true,reason:null}')" ]
 }
