@@ -101,6 +101,52 @@ setup() {
 	assert_nothing_created
 }
 
+@test "help, help close and close --help show the full help, close included" {
+	for args in "--help" "help" "help close" "close --help" "close b -h" "start --help"; do
+		# shellcheck disable=SC2086
+		run --separate-stderr "$SCRIPT" $args
+		[ "$status" -eq 0 ]
+		[ -z "$stderr" ]
+		[[ "$output" == *"herdr-subagent start [flags] <<'EOF'"* ]] || false
+		[[ "$output" == *"herdr-subagent close <branch>"* ]] || false
+	done
+	assert_nothing_created
+}
+
+@test "--help shows both JSON shapes" {
+	run --separate-stderr "$SCRIPT" --help
+	[[ "$output" == *'{"terminal","name","branch","base","worktree","template","issue",'* ]] || false
+	[[ "$output" == *'"labels","task_sent","reason"}'* ]] || false
+	[[ "$output" == *'{"branch","worktree","terminal_killed","worktree_removed",'* ]] || false
+	[[ "$output" == *'"branch_deleted","branch_kept_reason"}'* ]] || false
+}
+
+@test "--help has an exit-code row for each code of start and close" {
+	run --separate-stderr "$SCRIPT" --help
+	table="$(printf '%s\n' "$output" | sed -n '/^Exit codes/,/^$/p')"
+	[[ "$table" == *"start"*"close"* ]] || false
+	for code in 0 1 2 3 4 5 6 130; do
+		printf '%s\n' "$table" | grep -Eq "^  $code +[a-z]" || {
+			echo "no exit-code row for $code" >&2
+			false
+		}
+	done
+}
+
+@test "--help has a Tips for agents section covering the supervision loop" {
+	run --separate-stderr "$SCRIPT" --help
+	tips="$(printf '%s\n' "$output" | sed -n '/^Tips for agents:/,/^Report issues:/p')"
+	[ -n "$tips" ]
+	for s in "<<'EOF'" "hc wait --children any" "claims" "Exit 6" \
+		"permission prompt" "Exit 5" "hc ls --label subagent.repo=" \
+		"merged" ".worktrees/"; do
+		[[ "$tips" == *"$s"* ]] || {
+			echo "tips miss: $s" >&2
+			false
+		}
+	done
+}
+
 @test "a flag without its value exits 2" {
 	run --separate-stderr "$SCRIPT" start --branch <<<"task"
 	[ "$status" -eq 2 ]

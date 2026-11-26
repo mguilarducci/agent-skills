@@ -12,53 +12,36 @@ ISSUES_URL="https://github.com/mguilarducci/agent-skills/issues"
 
 # --- help --------------------------------------------------------------------
 
-print_main_help() {
+# The one place for guidance: every help topic prints all of it.
+print_help() {
 	cat <<HELP
-$PROG - launch a Herdr subagent in its own worktree
-
-Examples:
-  $PROG start --branch feat/login <<'EOF'
-  Add OAuth login.
-  EOF
-
-Usage:
-  $PROG start [flags] <<'EOF'
-  <task>
-  EOF
-  $PROG help [start]
-  $PROG --version
-
-Commands:
-  start  Create a worktree on a new branch and start an hc template in
-         it; the task is read from stdin
-  help   Show this help; \`help start\` shows the start flags
-
-Flags:
-  -h, --help   Show help
-  --version    Print the version
-
-Report issues: $ISSUES_URL
-HELP
-}
-
-print_start_help() {
-	cat <<HELP
-$PROG start - start a Herdr subagent in a new worktree
+$PROG - start and close Herdr subagents, each in its own worktree
 
 Examples:
   $PROG start --branch fix/docs <<'EOF'
-  Fix the "quoted" \$HOME and \`backtick\` bits in the docs.
+  Fix the "quoted" \$HOME and \`backtick\` bits in the docs (issue #48).
+  Push the branch and open a PR against main.
   EOF
-  $PROG start --base develop --branch fix/parser <task.md
-  $PROG start --template implementer-codex --branch fix/ci <<<"Fix CI"
+  hc wait --children any
+  $PROG close fix/docs
   $PROG start --branch fix/48 --issue 48 --label batch=b1 <task.md
 
 Usage:
   $PROG start [flags] <<'EOF'
   <task>
   EOF
+  $PROG close <branch>
+  $PROG help [start|close]
+  $PROG --version
 
-Flags:
+Commands:
+  start  Create a worktree on a new branch from origin/<base> and start an
+         hc template in it; the task is read from stdin
+  close  Kill a Herdr subagent's terminal, remove its worktree, and delete
+         its branch once it is merged into origin/<base>
+  help   Show this help (every topic shows all of it)
+
+start flags:
   --branch <name>   New branch for the worktree (required).
                     ASCII letters, digits and . _ / - only.
   --base <branch>   Base branch: a branch on origin to start from
@@ -70,27 +53,39 @@ Flags:
   --label <k=v>     Extra label, repeatable. Keys use ASCII letters,
                     digits and . _ -; subagent.*, herdr.* and where are
                     reserved.
-  -h, --help        Show this help.
+
+close takes one branch and no flags.
+
+Global flags:
+  -h, --help        Show this help; wins over every other argument.
+  --version         Print the version.
 
 Flags take \`--flag value\` or \`--flag=value\`, in any order.
 
-The task is read from stdin, byte-for-byte, trailing newlines included.
-Use a quoted heredoc (<<'EOF') so quotes, \$ and backticks reach the
-Herdr subagent unchanged. An empty or whitespace-only task, or stdin
-attached to a terminal, exits 2.
+Task: read from stdin, byte-for-byte, trailing newlines included. Use a
+quoted heredoc (<<'EOF') so quotes, \$ and backticks reach the Herdr
+subagent unchanged. An empty or whitespace-only task, or stdin attached
+to a terminal, exits 2.
 
-start fetches <base> from origin and creates the new branch from
-origin/<base>. No local branch is ever written. The worktree goes to
-<main-checkout-root>/.worktrees/<slug(branch)>.
+Worktree: start fetches <base> from origin and creates the new branch
+from origin/<base>; no local branch is ever written. The worktree goes to
+<main-checkout-root>/.worktrees/<slug(branch)>, even when you run it from
+another worktree. The hc name is derived from the branch.
 
 Templates: the Herdr subagent is started from an hc template and the task.
 The template sets the Harness, model, effort, permissions and the child's
 fixed rules; hc adds the report-back target, so the script sends only the
 task. It must be listed by \`hc templates\`: a Markdown file in
 ~/.config/herdr-core/templates/<name>.md. This repo ships
-scripts/herdr-subagent/templates/implementer.md (Claude Code) and
-implementer-codex.md (Codex): copy or link them there. The script never
-installs a template; a different setup is a different template.
+scripts/herdr-subagent/templates/implementer.md and implementer-codex.md;
+copy or link them there:
+  implementer        Claude Code, with \`hc send\` and \`hc label\` pre-allowed.
+  implementer-codex  Codex in its workspace-write sandbox with network
+                     access on: hc cannot reach its core from inside that
+                     sandbox otherwise, and the child needs \`hc send\` and
+                     \`hc label\`.
+The script never installs a template; a different setup is a different
+template.
 
 Parent: the Herdr subagent reports to --parent, else \$HC_TERMINAL_ID. It
 must be a live hc terminal: run it from an hc terminal, under
@@ -98,30 +93,76 @@ must be a live hc terminal: run it from an hc terminal, under
 
 Labels: every Herdr subagent gets subagent.repo (the main checkout root),
 subagent.branch and subagent.base, plus subagent.issue and your --label
-ones. Find them with \`hc ls --label subagent.repo=<root>\` (or
-subagent.issue=<n>).
+ones. The shipped templates have the child set subagent.pr=<PR URL> when
+it opens a PR.
 
-stdout is always one JSON line:
+close: finds the terminal by its subagent.repo and subagent.branch labels
+(a finished one too), kills and removes it, then removes the worktree. A
+worktree with uncommitted or untracked changes exits 3 and touches
+nothing. close fetches the base (the terminal's subagent.base label, else
+main) and deletes the local branch only when its tip is an ancestor of
+origin/<base>, as a merge commit leaves it. Otherwise the branch is kept
+and the JSON says why; a failed fetch keeps it too. There is no --force.
+Rerun close after a partial failure to finish. The branch checked out in
+the main checkout is refused (exit 2).
+
+stdout is always one JSON line. start prints:
   {"terminal","name","branch","base","worktree","template","issue",
    "labels","task_sent","reason"}
 issue is a number or null; labels holds every label applied. reason is
-hc's reason when task_sent is false, null otherwise. stderr
-carries only progress, errors, leftovers after a failure and one final
-"started" line.
+hc's reason when task_sent is false, null otherwise. close prints:
+  {"branch","worktree","terminal_killed","worktree_removed",
+   "branch_deleted","branch_kept_reason"}
+worktree is null when none was found. terminal_killed is also true when a
+finished terminal was only removed. branch_kept_reason is null once the
+branch is deleted, else one of:
+  not merged into origin/<base>; pushed to origin/<branch>
+  not merged into origin/<base>; not pushed (its tip is not on origin)
+  could not check the merge: <fetch error>
+  no local branch <branch>
+stderr carries only progress, errors, leftovers after a failure and one
+final "started" or "closed" line.
 
 Exit codes:
-  0    launched
-  1    git or hc failed after work started (leftovers are printed)
-  2    usage error, including a TTY or empty stdin; nothing was created
-  3    no origin, a failed fetch, or <base> missing on origin; nothing
-       was created
-  4    missing git repo, hc (or a failing hc ls or hc templates), the
-       template, or a live parent; nothing was created
-  5    branch, worktree path or hc name already exists; nothing was created:
-       pick another name and retry (an existing branch is never reused)
-  6    started, but hc did not deliver the task (task_sent false); the
-       terminal and worktree are kept: read its screen, then send the task
-  130  interrupted
+       start                               close
+  0    started, task sent                  closed (the branch may be kept)
+  1    git or hc failed after work         git or hc failed midway; close
+       started; leftovers are printed      again to finish
+  2    usage error, including a bad        usage error, including the
+       label or a TTY or empty stdin       main checkout's branch
+  3    no origin, a failed fetch, or       dirty worktree; nothing touched
+       <base> missing on origin
+  4    missing git repo, hc, template      missing git repo or hc
+       or live parent
+  5    branch, worktree path or live hc    no worktree and no labelled
+       name already exists                 terminal for that branch
+  6    started, but hc did not deliver     -
+       the task (task_sent false)
+  130  interrupted                         interrupted
+After start exits 2 to 5, nothing was created.
+
+Tips for agents:
+  - Pass the task with a quoted heredoc (<<'EOF') and put everything this
+    launch needs in it: the issue, the files, how to verify, where to open
+    the PR. The template already holds the fixed rules.
+  - Wait with \`hc wait --children any\` instead of polling or sleeping; it
+    returns on a child's next report, block, error or exit.
+  - Treat a report as claims: check the worktree (git log, git diff, the
+    tests) before you rely on it.
+  - Exit 6: the child is up but idle, often on a trust dialog. Read its
+    screen (\`hc read <t>\`), resolve it (\`hc keys <t> enter\`), then send
+    the task yourself (\`hc send <t> "\$(cat task.md)"\`).
+  - On a permission prompt (hc wait says the child is blocked), read its
+    screen and answer it with \`hc keys\`, or allow the command in the
+    template so it does not ask again.
+  - Exit 5: the name is taken; pick another --branch and retry. An existing
+    branch is never reused.
+  - List your Herdr subagents with \`hc ls --label subagent.repo=<root>\`, or
+    \`--label subagent.issue=<n>\`; add \`--all\` for finished ones.
+  - Close only merged work: close keeps an unmerged branch, so merge the PR
+    first, or delete the branch yourself if you mean to discard it.
+  - If .worktrees/ shows up in git status, ignore it in that repo
+    (.gitignore or .git/info/exclude); the script never edits either.
 
 Report issues: $ISSUES_URL
 HELP
@@ -132,6 +173,7 @@ print_short_help() {
 Usage: $PROG start [flags] <<'EOF'
 <task>
 EOF
+       $PROG close <branch>
 
 Example:
   $PROG start --branch feat/login <<<"Add OAuth login"
@@ -781,13 +823,12 @@ cmd_close() {
 # --- main --------------------------------------------------------------------
 
 main() {
-	local arg seen_start=0
+	local arg
 	# -h/--help wins over everything.
 	for arg in "$@"; do
 		case "$arg" in
-		start) seen_start=1 ;;
 		-h | --help)
-			if [ "$seen_start" -eq 1 ]; then print_start_help; else print_main_help; fi
+			print_help
 			exit 0
 			;;
 		esac
@@ -802,8 +843,7 @@ main() {
 		;;
 	help)
 		case "$#:${2:-}" in
-		1:) print_main_help ;;
-		2:start) print_start_help ;;
+		1: | 2:start | 2:close) print_help ;;
 		*) usage_error "unknown help topic: ${2:-}" ;;
 		esac
 		;;
