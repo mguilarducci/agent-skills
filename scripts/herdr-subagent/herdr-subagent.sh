@@ -210,6 +210,12 @@ die() {
 	exit "$code"
 }
 
+# Exits 4 unless run inside a git repository with hc on PATH.
+require_repo_and_hc() {
+	git rev-parse --git-dir >/dev/null 2>&1 || die 4 "not inside a git repository"
+	command -v hc >/dev/null 2>&1 || die 4 "hc not found on PATH"
+}
+
 # --- naming ------------------------------------------------------------------
 
 # Each run of chars outside [A-Za-z0-9._-] becomes "-", then "-" is trimmed.
@@ -731,8 +737,7 @@ cmd_start() {
 	hc_name="$(hc_name_for "$slug")"
 	[ -n "$hc_name" ] || usage_error "branch name gives an empty hc name: $branch"
 
-	git rev-parse --git-dir >/dev/null 2>&1 || die 4 "not inside a git repository"
-	command -v hc >/dev/null 2>&1 || die 4 "hc not found on PATH"
+	require_repo_and_hc
 	refuse_dead_parent "$parent"
 	refuse_missing_template "$template"
 
@@ -858,8 +863,7 @@ cmd_close() {
 	command -v git >/dev/null 2>&1 || die 4 "git not found on PATH"
 	git check-ref-format --branch "$branch" >/dev/null 2>&1 ||
 		usage_error "invalid branch name: $branch"
-	git rev-parse --git-dir >/dev/null 2>&1 || die 4 "not inside a git repository"
-	command -v hc >/dev/null 2>&1 || die 4 "hc not found on PATH"
+	require_repo_and_hc
 
 	# Everything is looked up before anything is touched.
 	local root wt_path
