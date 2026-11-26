@@ -56,7 +56,9 @@ herdr-subagent close feat/login   # once the PR is merged
   `implementer` runs Claude Code with `hc send` and `hc label` pre-allowed.
   `implementer-codex` runs Codex in its workspace-write sandbox with network
   access on: from inside that sandbox `hc` can't reach its core otherwise,
-  and the child needs both `hc send` and `hc label`. A missing template
+  and the child needs both `hc send` and `hc label`. A narrower alternative,
+  untested: keep network access off and add a Codex rule of your own that
+  allows just the `hc send` and `hc label` prefixes. A missing template
   exits 4 and creates nothing.
 - `--parent <t>`: the live hc terminal that gets the reports (default
   `$HC_TERMINAL_ID`). Run it from an hc terminal, under `hc run --bg`, or pass
@@ -64,7 +66,7 @@ herdr-subagent close feat/login   # once the PR is merged
 - Labels: every Herdr subagent gets `subagent.repo` (the main checkout root),
   `subagent.branch` and `subagent.base`. `--issue <n>` (digits only) adds
   `subagent.issue`, and repeatable `--label k=v` adds your own. Keys under
-  `subagent.`, `herdr.` or `where` are reserved (exit 2). Find them with
+  `subagent.`, `herdr.` or `where.`, and `where` itself, are reserved (exit 2). Find them with
   `hc ls --label subagent.repo=<root>`.
 - The task is read only from stdin, byte-for-byte, trailing newlines
   included. Use a quoted heredoc so quotes, `$` and backticks survive:
@@ -76,7 +78,8 @@ herdr-subagent close feat/login   # once the PR is merged
   ```
 
   An empty or whitespace-only task, or stdin attached to a terminal, exits 2.
-- stdout is always one JSON line,
+- On success (exit 0), and for exit 6, stdout is one JSON line; on other
+  failures stdout is empty and stderr explains. The line is
   `{"terminal","name","branch","base","worktree","template","issue","labels","task_sent","reason"}`,
   where `issue` is a number or `null`, `labels` holds every label applied,
   and `reason` is hc's reason when `task_sent` is false and `null`
@@ -101,7 +104,8 @@ worktree `start` creates, `<main-checkout-root>/.worktrees/<slug(branch)>`: a
 branch checked out in the main checkout or in any other worktree is refused
 (exit 2).
 
-stdout is one JSON line,
+On exit 0 (the branch may be kept), stdout is one JSON line; on other
+failures it is empty and stderr explains. The line is
 `{"branch","worktree","terminal_removed","worktree_removed","branch_deleted","branch_kept_reason"}`.
 `worktree` is `null` when none was found, `terminal_removed` is true once the
 terminal's hc record is removed (a live one is killed first), and

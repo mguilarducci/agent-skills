@@ -51,8 +51,8 @@ start flags:
                     (default: \$HC_TERMINAL_ID).
   --issue <n>       Issue number (digits only), as label subagent.issue.
   --label <k=v>     Extra label, repeatable. Keys use ASCII letters,
-                    digits and . _ -; subagent.*, herdr.* and where are
-                    reserved.
+                    digits and . _ -; subagent.*, herdr.*, where and
+                    where.* are reserved.
 
 close takes one branch and no flags.
 
@@ -83,7 +83,9 @@ copy or link them there:
   implementer-codex  Codex in its workspace-write sandbox with network
                      access on: hc cannot reach its core from inside that
                      sandbox otherwise, and the child needs \`hc send\` and
-                     \`hc label\`.
+                     \`hc label\`. A narrower, untested alternative: a
+                     Codex rule of your own that allows just the
+                     \`hc send\` and \`hc label\` prefixes.
 The script never installs a template; a different setup is a different
 template.
 
@@ -109,7 +111,8 @@ the local branch is left. close only removes the worktree start creates,
 <main-checkout-root>/.worktrees/<slug(branch)>: a branch checked out in
 the main checkout or in any other worktree is refused (exit 2).
 
-stdout is always one JSON line. start prints:
+On success (exit 0), and for exit 6, stdout is one JSON line; on other
+failures stdout is empty and stderr explains. start prints:
   {"terminal","name","branch","base","worktree","template","issue",
    "labels","task_sent","reason"}
 issue is a number or null; labels holds every label applied. reason is
@@ -304,7 +307,7 @@ check_user_label() {
 	esac
 	case "$key" in
 	subagent.* | herdr.* | where | where.*)
-		usage_error "reserved --label key (subagent.*, herdr.* and where are taken): $key"
+		usage_error "reserved --label key (subagent.*, herdr.*, where and where.* are taken): $key"
 		;;
 	esac
 }
