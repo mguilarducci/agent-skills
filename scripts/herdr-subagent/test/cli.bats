@@ -117,7 +117,7 @@ setup() {
 	run --separate-stderr "$SCRIPT" --help
 	[[ "$output" == *'{"terminal","name","branch","base","worktree","template","issue",'* ]] || false
 	[[ "$output" == *'"labels","task_sent","reason"}'* ]] || false
-	[[ "$output" == *'{"branch","worktree","terminal_killed","worktree_removed",'* ]] || false
+	[[ "$output" == *'{"branch","worktree","terminal_removed","worktree_removed",'* ]] || false
 	[[ "$output" == *'"branch_deleted","branch_kept_reason"}'* ]] || false
 }
 

@@ -114,11 +114,11 @@ stdout is always one JSON line. start prints:
    "labels","task_sent","reason"}
 issue is a number or null; labels holds every label applied. reason is
 hc's reason when task_sent is false, null otherwise. close prints:
-  {"branch","worktree","terminal_killed","worktree_removed",
+  {"branch","worktree","terminal_removed","worktree_removed",
    "branch_deleted","branch_kept_reason"}
-worktree is null when none was found. terminal_killed is also true when a
-finished terminal was only removed. branch_kept_reason is null once the
-branch is deleted, else one of:
+worktree is null when none was found. terminal_removed is true once the
+hc record is removed (a live terminal is killed first). branch_kept_reason
+is null once the branch is deleted, else one of:
   not merged into origin/<base>; pushed to origin/<branch>
   not merged into origin/<base>; not pushed (its tip is not on origin)
   could not check the merge: <fetch error>
@@ -947,7 +947,7 @@ EOF
 $terminals
 EOF
 
-	printf '{"branch":%s,"worktree":%s,"terminal_killed":%s,"worktree_removed":%s,"branch_deleted":%s,"branch_kept_reason":%s}\n' \
+	printf '{"branch":%s,"worktree":%s,"terminal_removed":%s,"worktree_removed":%s,"branch_deleted":%s,"branch_kept_reason":%s}\n' \
 		"$(json_str "$branch")" "$wt_json" "$term_removed" "$removed" "$deleted" "$kept_json"
 	say "closed $branch"
 }

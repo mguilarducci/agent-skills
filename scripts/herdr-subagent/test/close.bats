@@ -54,7 +54,7 @@ has_branch() {
 	with_terminal live
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":true,"worktree_removed":true,"branch_deleted":true,"branch_kept_reason":null}' ]
+	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_removed":true,"worktree_removed":true,"branch_deleted":true,"branch_kept_reason":null}' ]
 	[ "$(cat "$HC_LOG/kill-calls")" = "kill t5 --json" ]
 	[ "$(cat "$HC_LOG/rm-calls")" = "rm t5 --json" ]
 	grep -qxF -- "ls --all --json --label subagent.repo=$REPO --label subagent.branch=b" "$HC_LOG/ls-calls"
@@ -68,7 +68,7 @@ has_branch() {
 	with_terminal live
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":true,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"not merged into origin/main; pushed to origin/b"}' ]
+	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_removed":true,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"not merged into origin/main; pushed to origin/b"}' ]
 	[ ! -e "$REPO/.worktrees/b" ]
 	has_branch b
 }
@@ -80,7 +80,7 @@ has_branch() {
 	with_terminal live
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":true,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"not merged into origin/main; not pushed (its tip is not on origin)"}' ]
+	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_removed":true,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"not merged into origin/main; not pushed (its tip is not on origin)"}' ]
 	[ ! -e "$REPO/.worktrees/b" ]
 	has_branch b
 }
@@ -93,7 +93,7 @@ has_branch() {
 	git remote set-url origin "$SANDBOX/gone.git"
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":true,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"could not check the merge: git fetch origin main failed"}' ]
+	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_removed":true,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"could not check the merge: git fetch origin main failed"}' ]
 	[ "$(cat "$HC_LOG/rm-calls")" = "rm t5 --json" ]
 	[ ! -e "$REPO/.worktrees/b" ]
 	has_branch b
@@ -105,7 +105,7 @@ has_branch() {
 	git remote remove origin
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":false,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"could not check the merge: no origin remote (base unknown, checked against main)"}' ]
+	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_removed":false,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"could not check the merge: no origin remote (base unknown, checked against main)"}' ]
 	has_branch b
 }
 
@@ -116,7 +116,7 @@ has_branch() {
 	with_terminal finished develop
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":true,"worktree_removed":true,"branch_deleted":true,"branch_kept_reason":null}' ]
+	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_removed":true,"worktree_removed":true,"branch_deleted":true,"branch_kept_reason":null}' ]
 	[ "$(cat "$HC_LOG/get-calls")" = "get t5 --json" ]
 }
 
@@ -127,7 +127,7 @@ has_branch() {
 	with_terminal live main
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":true,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"not merged into origin/main; pushed to origin/b"}' ]
+	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_removed":true,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"not merged into origin/main; pushed to origin/b"}' ]
 }
 
 @test "without a terminal record the base falls back to main" {
@@ -137,7 +137,7 @@ has_branch() {
 	no_terminal
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":false,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"not merged into origin/main; pushed to origin/b (base unknown, checked against main)"}' ]
+	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_removed":false,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"not merged into origin/main; pushed to origin/b (base unknown, checked against main)"}' ]
 	[ ! -e "$HC_LOG/kill-calls" ]
 	[ ! -e "$HC_LOG/rm-calls" ]
 
@@ -145,7 +145,7 @@ has_branch() {
 	merge_on_origin c
 	run --separate-stderr "$SCRIPT" close c
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"c","worktree":"'"$REPO"'/.worktrees/c","terminal_killed":false,"worktree_removed":true,"branch_deleted":true,"branch_kept_reason":null}' ]
+	[ "$output" = '{"branch":"c","worktree":"'"$REPO"'/.worktrees/c","terminal_removed":false,"worktree_removed":true,"branch_deleted":true,"branch_kept_reason":null}' ]
 }
 
 @test "a terminal without a base label: the kept reason says main was a fallback" {
@@ -154,7 +154,7 @@ has_branch() {
 	with_terminal live -
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":true,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"not merged into origin/main; pushed to origin/b (base unknown, checked against main)"}' ]
+	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_removed":true,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"not merged into origin/main; pushed to origin/b (base unknown, checked against main)"}' ]
 }
 
 @test "uncommitted or untracked changes exit 3 and touch nothing" {
@@ -195,7 +195,7 @@ has_branch() {
 	with_terminal finished
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":null,"terminal_killed":true,"worktree_removed":false,"branch_deleted":true,"branch_kept_reason":null}' ]
+	[ "$output" = '{"branch":"b","worktree":null,"terminal_removed":true,"worktree_removed":false,"branch_deleted":true,"branch_kept_reason":null}' ]
 	[ "$(cat "$HC_LOG/rm-calls")" = "rm t5 --json" ]
 }
 
@@ -221,7 +221,7 @@ has_branch() {
 	export HC_STUB_RM_EXIT=0
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":null,"terminal_killed":true,"worktree_removed":false,"branch_deleted":false,"branch_kept_reason":"no local branch b"}' ]
+	[ "$output" = '{"branch":"b","worktree":null,"terminal_removed":true,"worktree_removed":false,"branch_deleted":false,"branch_kept_reason":"no local branch b"}' ]
 
 	# The terminal record is gone now; a third close finds nothing.
 	no_terminal
@@ -248,7 +248,7 @@ has_branch() {
 	no_terminal
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":null,"terminal_killed":false,"worktree_removed":false,"branch_deleted":true,"branch_kept_reason":null}' ]
+	[ "$output" = '{"branch":"b","worktree":null,"terminal_removed":false,"worktree_removed":false,"branch_deleted":true,"branch_kept_reason":null}' ]
 	run ! has_branch b
 }
 
@@ -265,7 +265,7 @@ has_branch() {
 	rm "$REPO/.git/refs/heads/b.lock"
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":null,"terminal_killed":true,"worktree_removed":false,"branch_deleted":true,"branch_kept_reason":null}' ]
+	[ "$output" = '{"branch":"b","worktree":null,"terminal_removed":true,"worktree_removed":false,"branch_deleted":true,"branch_kept_reason":null}' ]
 	[ "$(cat "$HC_LOG/rm-calls")" = "rm t5 --json" ]
 }
 

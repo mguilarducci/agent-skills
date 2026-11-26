@@ -102,10 +102,10 @@ branch checked out in the main checkout or in any other worktree is refused
 (exit 2).
 
 stdout is one JSON line,
-`{"branch","worktree","terminal_killed","worktree_removed","branch_deleted","branch_kept_reason"}`.
-`worktree` is `null` when none was found, `terminal_killed` is also true when
-a finished terminal was only removed, and `branch_kept_reason` is `null` once
-the branch is deleted.
+`{"branch","worktree","terminal_removed","worktree_removed","branch_deleted","branch_kept_reason"}`.
+`worktree` is `null` when none was found, `terminal_removed` is true once the
+terminal's hc record is removed (a live one is killed first), and
+`branch_kept_reason` is `null` once the branch is deleted.
 
 ### Exit codes
 
