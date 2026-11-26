@@ -11,13 +11,14 @@ setup() {
 @test "implementer is the default template, and the task is its only argument" {
 	run --separate-stderr "$SCRIPT" start --branch b <<<"task"
 	[ "$status" -eq 0 ]
-	[ "$(hc_argv)" = "$(printf '%s\n' run --bg --name b --cwd "$WT" -- implementer task '')" ]
+	[ "$(hc_template)" = "implementer" ]
+	[ "$(hc_argv | sed -n '/^--$/,$p')" = "$(printf '%s\n' -- implementer task '')" ]
 }
 
 @test "--template picks the hc template, in either flag form" {
 	run --separate-stderr "$SCRIPT" start --template implementer-codex --branch b <<<"task"
 	[ "$status" -eq 0 ]
-	[ "$(hc_arg 8)" = "implementer-codex" ]
+	[ "$(hc_template)" = "implementer-codex" ]
 	[ "$(printf '%s' "$output" | jq -r .template)" = "implementer-codex" ]
 
 	rm -rf "$WT" "${HC_LOG:?}"/*
@@ -25,7 +26,7 @@ setup() {
 	git branch -D -q b
 	run --separate-stderr "$SCRIPT" start --branch b --template=implementer-codex <<<"task"
 	[ "$status" -eq 0 ]
-	[ "$(hc_arg 8)" = "implementer-codex" ]
+	[ "$(hc_template)" = "implementer-codex" ]
 }
 
 @test "a template hc templates doesn't list exits 4, says where templates go, and creates nothing" {

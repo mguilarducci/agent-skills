@@ -51,6 +51,7 @@ Examples:
   EOF
   $PROG start --base develop --branch fix/parser <task.md
   $PROG start --template implementer-codex --branch fix/ci <<<"Fix CI"
+  $PROG start --branch fix/48 --issue 48 --label batch=b1 <task.md
 
 Usage:
   $PROG start [flags] <<'EOF'
@@ -63,6 +64,12 @@ Flags:
   --base <branch>   Base branch: a branch on origin to start from
                     (default: main).
   --template <name> hc template to launch from (default: implementer).
+  --parent <t>      Live hc terminal that gets the reports
+                    (default: \$HC_TERMINAL_ID).
+  --issue <n>       Issue number (digits only), as label subagent.issue.
+  --label <k=v>     Extra label, repeatable. Keys use ASCII letters,
+                    digits and . _ -; subagent.*, herdr.* and where are
+                    reserved.
   -h, --help        Show this help.
 
 Flags take \`--flag value\` or \`--flag=value\`, in any order.
@@ -85,9 +92,20 @@ scripts/herdr-subagent/templates/implementer.md (Claude Code) and
 implementer-codex.md (Codex): copy or link them there. The script never
 installs a template; a different setup is a different template.
 
+Parent: the Herdr subagent reports to --parent, else \$HC_TERMINAL_ID. It
+must be a live hc terminal: run it from an hc terminal, under
+\`hc run --bg\`, or pass --parent <t>.
+
+Labels: every Herdr subagent gets subagent.repo (the main checkout root),
+subagent.branch and subagent.base, plus subagent.issue and your --label
+ones. Find them with \`hc ls --label subagent.repo=<root>\` (or
+subagent.issue=<n>).
+
 stdout is always one JSON line:
-  {"terminal","name","branch","base","worktree","template","task_sent","reason"}
-reason is hc's reason when task_sent is false, null otherwise. stderr
+  {"terminal","name","branch","base","worktree","template","issue",
+   "labels","task_sent","reason"}
+issue is a number or null; labels holds every label applied. reason is
+hc's reason when task_sent is false, null otherwise. stderr
 carries only progress, errors, leftovers after a failure and one final
 "started" line.
 
@@ -98,7 +116,7 @@ Exit codes:
   3    no origin, a failed fetch, or <base> missing on origin; nothing
        was created
   4    missing git repo, hc (or a failing hc ls or hc templates), the
-       template or \$HC_TERMINAL_ID; nothing was created
+       template, or a live parent; nothing was created
   5    branch, worktree path or hc name already exists; nothing was created:
        pick another name and retry (an existing branch is never reused)
   6    started, but hc did not deliver the task (task_sent false); the
@@ -188,6 +206,63 @@ refuse_taken_names() {
 		exit_name_taken "live hc terminal named $hc_name"
 	fi
 	return 0
+}
+
+# --- parent ------------------------------------------------------------------
+
+# shellcheck disable=SC2016 # backticks quote commands, not substitutions
+PARENT_HINT='run it from an hc terminal, under `hc run --bg`, or pass `--parent <t>`'
+
+# Exits 4 unless $1 is a live hc terminal, so a child is never orphaned.
+refuse_dead_parent() {
+	local parent="$1" got
+	[ -n "$parent" ] || die 4 "no parent: $PARENT_HINT; nothing was created"
+	got="$(hc get "$parent" --json 2>/dev/null)" ||
+		die 4 "parent $parent is not a live hc terminal: $PARENT_HINT; nothing was created"
+	printf '%s\n' "$got" | grep -q '"state"[[:space:]]*:[[:space:]]*"live"' ||
+		die 4 "parent $parent is not a live hc terminal: $PARENT_HINT; nothing was created"
+}
+
+# --- labels ------------------------------------------------------------------
+
+# Set by add_label: the hc run flags, the JSON object body, the keys seen.
+LABEL_ARGS=()
+LABELS_JSON=""
+LABEL_KEYS=" "
+
+add_label() {
+	local key="$1" value="$2"
+	LABEL_ARGS[${#LABEL_ARGS[@]}]="--label"
+	LABEL_ARGS[${#LABEL_ARGS[@]}]="$key=$value"
+	[ -z "$LABELS_JSON" ] || LABELS_JSON="$LABELS_JSON,"
+	LABELS_JSON="$LABELS_JSON$(json_str "$key"):$(json_str "$value")"
+	LABEL_KEYS="$LABEL_KEYS$key "
+}
+
+# Exits 2 unless $1 is k=v with a free key: ASCII letters, digits and . _ -
+# (starting with a letter or digit), and a non-empty value without control
+# chars. Keys under subagent., herdr. and where belong to the script and the app.
+check_user_label() {
+	local label="$1" key value
+	case "$label" in
+	*=*) ;;
+	*) usage_error "invalid --label (want k=v): $label" ;;
+	esac
+	key="${label%%=*}"
+	value="${label#*=}"
+	if [ -z "$key" ] || [ -z "$value" ] ||
+		printf '%s' "$key" | LC_ALL=C grep -q '[^A-Za-z0-9._-]' ||
+		! printf '%s' "$key" | LC_ALL=C grep -q '^[A-Za-z0-9]'; then
+		usage_error "invalid --label (want k=v; keys use ASCII letters, digits and . _ -): $label"
+	fi
+	case "$value" in
+	*[[:cntrl:]]*) usage_error "invalid --label (control character in the value): $key" ;;
+	esac
+	case "$key" in
+	subagent.* | herdr.* | where | where.*)
+		usage_error "reserved --label key (subagent.*, herdr.* and where are taken): $key"
+		;;
+	esac
 }
 
 # --- templates ---------------------------------------------------------------
@@ -409,15 +484,15 @@ read_stdin_task() {
 
 cmd_start() {
 	local base="main" branch="" task="" arg
-	local template="implementer"
-	local flag value
+	local template="implementer" parent="${HC_TERMINAL_ID:-}" issue=""
+	local flag value user_labels=() label key seen=" "
 
 	while [ "$#" -gt 0 ]; do
 		arg="$1"
 		case "$arg" in
 		--) usage_error "unexpected --: the task is read from stdin" ;;
-		--base | --branch | --template | \
-			--base=* | --branch=* | --template=*)
+		--base | --branch | --template | --parent | --issue | --label | \
+			--base=* | --branch=* | --template=* | --parent=* | --issue=* | --label=*)
 			# --flag=value and --flag value both end up as $flag and $value.
 			case "$arg" in
 			*=*)
@@ -437,6 +512,27 @@ cmd_start() {
 			--base) base="$value" ;;
 			--branch) branch="$value" ;;
 			--template) template="$value" ;;
+			--parent)
+				[ -n "$value" ] || usage_error "--parent needs a value"
+				parent="$value"
+				;;
+			--issue)
+				case "$value" in
+				"" | *[!0-9]*) usage_error "--issue takes an issue number (digits only): $value" ;;
+				esac
+				# No leading zeros, so it is also a valid JSON number.
+				issue="$(printf '%s' "$value" | sed 's/^0*//')"
+				[ -n "$issue" ] || usage_error "--issue takes an issue number (digits only): $value"
+				;;
+			--label)
+				check_user_label "$value"
+				key="${value%%=*}"
+				case "$seen" in
+				*" $key "*) usage_error "--label $key given twice" ;;
+				esac
+				seen="$seen$key "
+				user_labels[${#user_labels[@]}]="$value"
+				;;
 			esac
 			;;
 		-*) usage_error "unknown flag: $arg" ;;
@@ -469,7 +565,7 @@ cmd_start() {
 
 	git rev-parse --git-dir >/dev/null 2>&1 || die 4 "not inside a git repository"
 	command -v hc >/dev/null 2>&1 || die 4 "hc not found on PATH"
-	[ -n "${HC_TERMINAL_ID:-}" ] || die 4 "HC_TERMINAL_ID is not set (run this from a Herdr terminal)"
+	refuse_dead_parent "$parent"
 	refuse_missing_template "$template"
 
 	local root
@@ -477,6 +573,16 @@ cmd_start() {
 	local wt_path="$root/.worktrees/$slug"
 
 	refuse_taken_names "$branch" "$wt_path" "$hc_name"
+
+	# The parent, template and cwd are hc's own terminal fields: not labels.
+	add_label subagent.repo "$root"
+	add_label subagent.branch "$branch"
+	add_label subagent.base "$base"
+	[ -z "$issue" ] || add_label subagent.issue "$issue"
+	# ${a[@]+...}: bash 3.2 calls an empty array unset under set -u.
+	for label in ${user_labels[@]+"${user_labels[@]}"}; do
+		add_label "${label%%=*}" "${label#*=}"
+	done
 
 	# After the name-conflict checks; Ctrl-C leaves git as git leaves it.
 	trap on_interrupt INT
@@ -497,7 +603,7 @@ cmd_start() {
 	# the report-back target; the script sends only the task.
 	say "starting template $template as $hc_name"
 	local hc_output
-	hc_output="$(hc run --bg --name "$hc_name" --cwd "$wt_path" -- "$template" "$task")" ||
+	hc_output="$(hc run --bg --name "$hc_name" --cwd "$wt_path" --parent "$parent" "${LABEL_ARGS[@]}" -- "$template" "$task")" ||
 		fail_after_start "hc run failed"
 
 	# Piped, hc prints JSON; take its "address". Fall back to a bare id.
@@ -514,7 +620,7 @@ cmd_start() {
 	read_first_message "$hc_output"
 
 	trap - INT
-	print_json "$terminal" "$hc_name" "$branch" "$base" "$wt_path" "$template" "$TASK_SENT" "$REASON_JSON"
+	print_json "$terminal" "$hc_name" "$branch" "$base" "$wt_path" "$template" "$issue" "$TASK_SENT" "$REASON_JSON"
 	if [ "$TASK_SENT" = "true" ]; then
 		say "started Herdr subagent $terminal ($hc_name)"
 		return 0
@@ -523,14 +629,15 @@ cmd_start() {
 	exit 6
 }
 
-# Prints the one JSON line on stdout. $7 is true/false, $8 already JSON.
+# Prints the one JSON line on stdout. $7 is the issue number or empty,
+# $8 true/false, $9 already JSON; the labels come from LABELS_JSON.
 print_json() {
 	local terminal="$1" name="$2" branch="$3" base="$4" wt_path="$5"
-	local template="$6" task_sent="$7" reason_json="$8"
-	printf '{"terminal":%s,"name":%s,"branch":%s,"base":%s,"worktree":%s,"template":%s,"task_sent":%s,"reason":%s}\n' \
+	local template="$6" issue="${7:-null}" task_sent="$8" reason_json="$9"
+	printf '{"terminal":%s,"name":%s,"branch":%s,"base":%s,"worktree":%s,"template":%s,"issue":%s,"labels":{%s},"task_sent":%s,"reason":%s}\n' \
 		"$(json_str "$terminal")" "$(json_str "$name")" "$(json_str "$branch")" \
 		"$(json_str "$base")" "$(json_str "$wt_path")" "$(json_str "$template")" \
-		"$task_sent" "$reason_json"
+		"$issue" "$LABELS_JSON" "$task_sent" "$reason_json"
 }
 
 # --- main --------------------------------------------------------------------

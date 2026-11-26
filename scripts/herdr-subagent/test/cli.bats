@@ -41,7 +41,8 @@ setup() {
 	for args in "help" "help start"; do
 		# shellcheck disable=SC2086
 		run --separate-stderr "$SCRIPT" $args
-		for s in "--json" "--dry-run" "--task-file" " run " "-- \""; do
+		# "herdr-subagent run", not `hc run --bg`, which help does mention.
+		for s in "--json" "--dry-run" "--task-file" "herdr-subagent run " "-- \""; do
 			[[ "$output" != *"$s"* ]] || false
 		done
 	done

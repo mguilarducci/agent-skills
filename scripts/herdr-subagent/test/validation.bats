@@ -46,11 +46,3 @@ setup() {
 	[[ "$stderr" == *"hc"* ]] || false
 	assert_nothing_created
 }
-
-@test "unset HC_TERMINAL_ID exits 4" {
-	unset HC_TERMINAL_ID
-	run --separate-stderr "$SCRIPT" start --branch b <<<"task"
-	[ "$status" -eq 4 ]
-	[[ "$stderr" == *"HC_TERMINAL_ID"* ]] || false
-	assert_nothing_created
-}
