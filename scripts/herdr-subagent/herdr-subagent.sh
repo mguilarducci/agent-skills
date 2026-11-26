@@ -684,21 +684,26 @@ print_summary() {
 	{
 		printf '\n'
 		if [ "$dry_run" -eq 1 ]; then
-			say "dry run: nothing was run; the commands above would start Herdr subagent $terminal ($name)"
+			say "dry run: nothing was run; the commands above would start Herdr subagent $name"
 		else
 			say "started Herdr subagent $terminal ($name)"
 		fi
 		printf '  worktree: %s\n' "$wt_path"
 		printf '  branch:   %s (new, from %s)\n' "$branch" "$base"
-		printf '\nNext:\n'
-		printf '  hc read %s\n' "$terminal"
-		printf '  hc send %s "<message>"\n' "$terminal"
-		printf '  hc wait %s\n' "$terminal"
-		printf '  hc kill %s\n' "$terminal"
+		if [ "$dry_run" -eq 1 ]; then
+			# No terminal exists yet, so there is nothing to read, send to or kill.
+			printf '\nNext: run the same command without --dry-run to start it.\n'
+		else
+			printf '\nNext:\n'
+			printf '  hc read %s\n' "$terminal"
+			printf '  hc send %s "<message>"\n' "$terminal"
+			printf '  hc wait %s\n' "$terminal"
+			printf '  hc kill %s\n' "$terminal"
+		fi
 		printf '\n'
 	} >&2
 	if [ "$harness" = "codex" ]; then
-		print_codex_warning "$terminal" >&2
+		print_codex_warning "$terminal" "$dry_run" >&2
 	else
 		print_claude_warning "$root" >&2
 	fi
@@ -710,6 +715,8 @@ print_codex_warning() {
 	printf '%s\n' 'Codex may ask before each `hc send`. To allow it for good, run:'
 	printf '%s\n' '  mkdir -p ~/.codex/rules'
 	printf '%s\n' "  echo 'prefix_rule(pattern=[\"hc\", \"send\"], decision=\"allow\")' >> ~/.codex/rules/default.rules"
+	# A dry run has no terminal to attach to; the real run prints these lines.
+	[ "$2" -eq 0 ] || return 0
 	printf '%s\n' 'If Codex shows a trust dialog, open it with:'
 	printf '  hc attach %s\n' "$1"
 }
