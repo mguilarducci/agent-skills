@@ -20,9 +20,5 @@ _Avoid_: Agent type, CLI, model
 A Herdr subagent whose harness differs from the parent's harness. It is always launched through `hc`.
 
 **Base branch**:
-The branch a Herdr subagent's worktree is created from; `main` unless another is given.
-_Avoid_: Source branch, parent branch
-
-**Base update**:
-Bringing the base branch up to date with `origin/main` before a Herdr subagent's worktree is created from it: `main` is fast-forwarded to `origin/main`, and any other base branch gets `origin/main` merged in.
-_Avoid_: Sync, refresh, step 0
+The branch on `origin` a Herdr subagent's worktree is created from; `main` unless another is given. `start` fetches it and branches from `origin/<base>`; local branches are never written.
+_Avoid_: Source branch, parent branch, Base update (the v1 step that rewrote the local base branch)
