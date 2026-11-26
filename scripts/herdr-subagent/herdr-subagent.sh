@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# herdr-subagent: launch a Herdr subagent (Claude Code or Codex) in its own worktree.
+# herdr-subagent: launch a Herdr subagent from an hc template in its own worktree.
 #
 # Runs on macOS's stock bash 3.2: no associative arrays, no ${x,,}.
-# Needs only git, hc and claude (or codex) at runtime.
+# Needs only git and hc at runtime; the Harness is the template's concern.
 
 set -u
 
@@ -12,124 +12,186 @@ ISSUES_URL="https://github.com/mguilarducci/agent-skills/issues"
 
 # --- help --------------------------------------------------------------------
 
-print_main_help() {
-	cat <<EOF
-$PROG - launch a Herdr subagent in its own worktree
+# The one place for guidance: every help topic prints all of it.
+print_help() {
+	cat <<HELP
+$PROG - start and close Herdr subagents, each in its own worktree
 
 Examples:
-  t=\$($PROG run --branch feat/login -- "Add OAuth login")
-  $PROG run --base develop --branch fix/parser -- "Fix the v1.2 parser"
-  hc wait "\$t"
+  $PROG start --branch fix/docs <<'EOF'
+  Fix the "quoted" \$HOME and \`backtick\` bits in the docs (issue #48).
+  Push the branch and open a PR against main.
+  EOF
+  hc wait --children any
+  $PROG close fix/docs
+  $PROG start --branch fix/48 --issue 48 --label batch=b1 <task.md
 
 Usage:
-  $PROG run [flags] -- "<task>"
-  $PROG help [run]
+  $PROG start [flags] <<'EOF'
+  <task>
+  EOF
+  $PROG close <branch>
+  $PROG help [start|close]
   $PROG --version
 
 Commands:
-  run    Create a worktree on a new branch and start the Harness in it through hc
-  help   Show this help; \`help run\` shows the run flags
+  start  Create a worktree on a new branch from origin/<base> and start an
+         hc template in it; the task is read from stdin
+  close  Kill a Herdr subagent's terminal, remove its worktree, and delete
+         its branch once it is merged into origin/<base>
+  help   Show this help (every topic shows all of it)
 
-Flags:
-  -h, --help   Show help
-  --version    Print the version
-
-Report issues: $ISSUES_URL
-EOF
-}
-
-# The indented "EOF" below is example text, not the end token.
-# shellcheck disable=SC1039
-print_run_help() {
-	cat <<EOF
-$PROG run - start a Herdr subagent in a new worktree
-
-Examples:
-  t=\$($PROG run --branch feat/login -- "Add OAuth login")
-  $PROG run --base develop --branch fix/parser -- "Fix the v1.2 parser"
-  $PROG run --branch=issue-6 -- "Implement issue #6"
-  $PROG run --harness codex --effort high --branch fix/ci -- "Fix CI"
-  $PROG run --dry-run --json --branch fix/ci -- "Fix CI"
-  $PROG run --branch fix/docs --task-file - <<'EOF'
-  Fix the "quoted" \$HOME and \`backtick\` bits in the docs.
-  EOF
-
-Usage:
-  $PROG run [flags] -- "<task>"
-  $PROG run [flags] --task-file <path|->
-
-Flags:
+start flags:
   --branch <name>   New branch for the worktree (required).
                     ASCII letters, digits and . _ / - only.
-  --base <branch>   Base branch: an existing local branch to start from
+  --base <branch>   Base branch: a branch on origin to start from
                     (default: main).
-  --harness <claude|codex>
-                    Harness: the agent program to start (default: claude).
-  --model <s>       Passed as-is: claude --model <s>, codex -m <s>.
-  --effort <s>      Passed as-is: claude --effort <s>,
-                    codex -c model_reasoning_effort=<s>.
-                    Left out, the harness's own config applies.
-  --no-base-update  Skip the Base update (see below).
-  --task-file <path|->
-                    Read the task from a file, or from stdin with -,
-                    instead of after --. The task is passed byte-for-byte,
-                    trailing newlines included; an empty or
-                    whitespace-only task exits 2.
-  --json            Print one JSON object on stdout instead of the id:
-                    {"terminal","name","branch","base","worktree",
-                    "harness","model"}; model is null without --model.
-  -n, --dry-run     Run nothing that changes state (not even git fetch);
-                    print the plan on stdout, one shell-quoted command per
-                    line, and exit 0. Arguments, prerequisites and names
-                    are still checked (exits 2, 4, 5). With --json, the
-                    object has "terminal":null and "commands":[...].
-  -h, --help        Show this help.
+  --template <name> hc template to launch from
+                    (default: implementer-claude).
+  --parent <t>      Live hc terminal that gets the reports
+                    (default: \$HC_TERMINAL_ID).
+  --issue <n>       Issue number (digits only), as label subagent.issue.
+  --label <k=v>     Extra label, repeatable. Keys use ASCII letters,
+                    digits and . _ -; subagent.*, herdr.*, where and
+                    where.* are reserved.
 
-Flags take \`--flag value\` or \`--flag=value\`, in any order before \`--\`.
+close takes one branch and no flags.
 
-The worktree goes to <main-checkout-root>/.worktrees/<slug(branch)>.
-stdout carries only the Herdr subagent's terminal id (or the --json
-object); progress, errors and the summary go to stderr.
+Global flags:
+  -h, --help        Show this help; wins over every other argument.
+  --version         Print the version.
 
-Base update: before creating the worktree, run fetches origin and brings
-the Base branch up to date with origin/main, in the worktree that has it
-checked out. main is fast-forwarded; any other Base branch gets origin/main
-merged in. A main that is not checked out anywhere is fast-forwarded as a
-ref. It never auto-resolves: these abort with exit 3 and leave git as it
-was, even when the Base branch already has origin/main: uncommitted or
-untracked changes where the Base branch is checked out, or a Base branch
-other than main checked out nowhere. So do a diverged main, a conflicting
-merge, a failed fetch or no origin.
+Flags take \`--flag value\` or \`--flag=value\`, in any order.
 
-In a dry run the Base update lines come from local state only: they show
-the step run takes if the fetch brings new commits to origin/main (run
-skips it if not). Known causes of an exit-3 abort are noted on stderr.
+Task: read from stdin, byte-for-byte, trailing newlines included. Use a
+quoted heredoc (<<'EOF') so quotes, \$ and backticks reach the Herdr
+subagent unchanged. An empty or whitespace-only task, or stdin attached
+to a terminal, exits 2.
+
+Worktree: start fetches <base> from origin and creates the new branch
+from origin/<base>; no local branch is ever written. The worktree goes to
+<main-checkout-root>/.worktrees/<slug(branch)>, even when you run it from
+another worktree. The hc name is derived from the branch.
+
+Templates: the Herdr subagent is started from an hc template and a text.
+The template, named <role>-<harness>, sets the Harness, model, effort and
+permissions. The text is the role's fixed rules (rules/<role>.md next to
+this script; the role is the template name up to its last "-"), a blank
+line, a "Task:" heading and your task; a role with no rules file gets the
+task alone. hc adds the report-back target. The template must be listed
+by \`hc templates\`: a Markdown file in
+~/.config/herdr-core/templates/<name>.md. This repo ships
+scripts/herdr-subagent/templates/implementer-claude.md and
+implementer-codex.md; copy or link them there:
+  implementer-claude Claude Code, with \`hc send\` and \`hc label\` pre-allowed.
+  implementer-codex  Codex in its workspace-write sandbox with network
+                     access on: hc cannot reach its core from inside that
+                     sandbox otherwise, and the child needs \`hc send\` and
+                     \`hc label\`. A narrower, untested alternative: a
+                     Codex rule of your own that allows just the
+                     \`hc send\` and \`hc label\` prefixes.
+The script never installs a template; a different setup is a different
+template.
+
+Parent: the Herdr subagent reports to --parent, else \$HC_TERMINAL_ID. It
+must be a live hc terminal: run it from an hc terminal, under
+\`hc run --bg\`, or pass --parent <t>.
+
+Labels: every Herdr subagent gets subagent.repo (the main checkout root),
+subagent.branch and subagent.base, plus subagent.issue and your --label
+ones. The shipped templates have the child set subagent.pr=<PR URL> when
+it opens a PR.
+
+close: finds the terminal by its subagent.repo and subagent.branch labels
+(a finished one too), kills it, then removes the worktree. A worktree
+with uncommitted or untracked changes exits 3 and touches nothing. close
+fetches the base (the terminal's subagent.base label, else main) and
+deletes the local branch only when its tip is an ancestor of
+origin/<base>, as a merge commit leaves it. Otherwise the branch is kept
+and the JSON says why; a failed fetch keeps it too. The terminal's hc
+record is removed last, so a rerun still knows the base. There is no
+--force. Rerun close after a partial failure to finish, even when only
+the local branch is left. close only removes the worktree start creates,
+<main-checkout-root>/.worktrees/<slug(branch)>: a branch checked out in
+the main checkout or in any other worktree is refused (exit 2).
+
+On success (exit 0), and for exit 6, stdout is one JSON line; on other
+failures stdout is empty and stderr explains. start prints:
+  {"terminal","name","branch","base","worktree","template","issue",
+   "labels","task_sent","reason"}
+issue is a number or null; labels holds every label applied. reason is
+hc's reason when task_sent is false, null otherwise. close prints:
+  {"branch","worktree","terminal_removed","worktree_removed",
+   "branch_deleted","branch_kept_reason"}
+worktree is null when none was found. terminal_removed is true once the
+hc record is removed (a live terminal is killed first). branch_kept_reason
+is null once the branch is deleted, else one of:
+  not merged into origin/<base>; pushed to origin/<branch>
+  not merged into origin/<base>; not pushed (its tip is not on origin)
+  could not check the merge: <fetch error>
+  no local branch <branch>
+When no subagent.base label is left, the first three end in
+" (base unknown, checked against main)".
+stderr carries only progress, errors, leftovers after a failure and one
+final "started" or "closed" line.
 
 Exit codes:
-  0    launched
-  1    git or hc failed after work started (leftovers are printed)
-  2    usage error; nothing was created
-  3    the Base update could not complete cleanly; nothing was created
-  4    missing git repo, hc (or a failing hc ls), the chosen Harness or
-       \$HC_TERMINAL_ID; nothing was created
-  5    branch, worktree path or hc name already exists; nothing was created:
-       pick another name and retry (an existing branch is never reused)
-  130  interrupted
+       start                               close
+  0    started, task sent                  closed (the branch may be kept)
+  1    git or hc failed after work         git or hc failed midway; close
+       started; leftovers are printed      again to finish
+  2    usage error, including a bad        usage error, including a branch
+       label or a TTY or empty stdin       checked out elsewhere
+  3    no origin, a failed fetch, or       dirty worktree; nothing touched
+       <base> missing on origin
+  4    missing git repo, hc, template      missing git repo or hc
+       or live parent
+  5    branch, worktree path or live hc    no worktree, no labelled
+       name already exists                 terminal and no local branch
+  6    started, but hc did not deliver     -
+       the task (task_sent false)
+  130  interrupted                         interrupted
+After start exits 2 to 5, nothing was created.
+
+Tips for agents:
+  - Pass the task with a quoted heredoc (<<'EOF') and put everything this
+    launch needs in it: the issue, the files, how to verify, where to open
+    the PR. The role's fixed rules are sent ahead of it.
+  - Wait with \`hc wait --children any\` instead of polling or sleeping; it
+    returns on a child's next report, block, error or exit.
+  - Treat a report as claims: check the worktree (git log, git diff, the
+    tests) before you rely on it.
+  - Exit 6: the child is up but idle, often on a trust dialog. Read its
+    screen (\`hc read <t>\`), resolve it (\`hc keys <t> enter\`), then send
+    the task yourself (\`hc send <t> "\$(cat task.md)"\`).
+  - On a permission prompt (hc wait says the child is blocked), read its
+    screen and answer it with \`hc keys\`, or allow the command in the
+    template so it does not ask again.
+  - Exit 5: the name is taken; pick another --branch and retry. An existing
+    branch is never reused.
+  - List your Herdr subagents with \`hc ls --label subagent.repo=<root>\`, or
+    \`--label subagent.issue=<n>\`; add \`--all\` for finished ones.
+  - Close only merged work: close keeps an unmerged branch, so merge the PR
+    first, or delete the branch yourself if you mean to discard it.
+  - If .worktrees/ shows up in git status, ignore it in that repo
+    (.gitignore or .git/info/exclude); the script never edits either.
 
 Report issues: $ISSUES_URL
-EOF
+HELP
 }
 
 print_short_help() {
-	cat <<EOF
-Usage: $PROG run [flags] -- "<task>"
-
-Examples:
-  $PROG run --branch feat/login -- "Add OAuth login"
-  $PROG run --base develop --branch fix/parser -- "Fix the v1.2 parser"
-
-See \`$PROG run --help\`.
+	cat <<HELP
+Usage: $PROG start [flags] <<'EOF'
+<task>
 EOF
+       $PROG close <branch>
+
+Example:
+  $PROG start --branch feat/login <<<"Add OAuth login"
+
+See \`$PROG start --help\`.
+HELP
 }
 
 # --- errors ------------------------------------------------------------------
@@ -150,6 +212,12 @@ die() {
 	shift
 	say "$*"
 	exit "$code"
+}
+
+# Exits 4 unless run inside a git repository with hc on PATH.
+require_repo_and_hc() {
+	git rev-parse --git-dir >/dev/null 2>&1 || die 4 "not inside a git repository"
+	command -v hc >/dev/null 2>&1 || die 4 "hc not found on PATH"
 }
 
 # --- naming ------------------------------------------------------------------
@@ -193,11 +261,111 @@ refuse_taken_names() {
 	# `hc run --name` must be unique among live terminals (plain `hc ls`).
 	local live
 	live="$(hc ls --json)" || die 4 "hc ls failed, so hc is not usable; nothing was created"
-	if printf '%s\n' "$live" | grep -o '"name"[[:space:]]*:[[:space:]]*"[^"]*"' |
-		sed 's/.*"\([^"]*\)"$/\1/' | grep -qxF -- "$hc_name"; then
+	if json_get "$live" '"terminals"[]."name"' | grep -qxF -- "$hc_name"; then
 		exit_name_taken "live hc terminal named $hc_name"
 	fi
 	return 0
+}
+
+# --- parent ------------------------------------------------------------------
+
+# shellcheck disable=SC2016 # backticks quote commands, not substitutions
+PARENT_HINT='run it from an hc terminal, under `hc run --bg`, or pass `--parent <t>`'
+
+# Exits 4 unless $1 is a live hc terminal, so a child is never orphaned.
+refuse_dead_parent() {
+	local parent="$1" got
+	[ -n "$parent" ] || die 4 "no parent: $PARENT_HINT; nothing was created"
+	got="$(hc get "$parent" --json 2>/dev/null)" ||
+		die 4 "parent $parent is not a live hc terminal: $PARENT_HINT; nothing was created"
+	[ "$(json_get "$got" '"state"')" = "live" ] ||
+		die 4 "parent $parent is not a live hc terminal: $PARENT_HINT; nothing was created"
+}
+
+# --- labels ------------------------------------------------------------------
+
+# Set by add_label: the hc run flags and the JSON object body.
+LABEL_ARGS=()
+LABELS_JSON=""
+
+add_label() {
+	local key="$1" value="$2"
+	LABEL_ARGS[${#LABEL_ARGS[@]}]="--label"
+	LABEL_ARGS[${#LABEL_ARGS[@]}]="$key=$value"
+	[ -z "$LABELS_JSON" ] || LABELS_JSON="$LABELS_JSON,"
+	LABELS_JSON="$LABELS_JSON$(json_str "$key"):$(json_str "$value")"
+}
+
+# Exits 2 unless $1 is k=v with a free key: ASCII letters, digits and . _ -
+# (starting with a letter or digit), and a non-empty value without control
+# chars. Keys under subagent., herdr. and where belong to the script and the app.
+check_user_label() {
+	local label="$1" key value
+	case "$label" in
+	*=*) ;;
+	*) usage_error "invalid --label (want k=v): $label" ;;
+	esac
+	key="${label%%=*}"
+	value="${label#*=}"
+	if [ -z "$key" ] || [ -z "$value" ] ||
+		printf '%s' "$key" | LC_ALL=C grep -q '[^A-Za-z0-9._-]' ||
+		! printf '%s' "$key" | LC_ALL=C grep -q '^[A-Za-z0-9]'; then
+		usage_error "invalid --label (want k=v; keys use ASCII letters, digits and . _ -): $label"
+	fi
+	case "$value" in
+	*[[:cntrl:]]*) usage_error "invalid --label (control character in the value): $key" ;;
+	esac
+	case "$key" in
+	subagent.* | herdr.* | where | where.*)
+		usage_error "reserved --label key (subagent.*, herdr.*, where and where.* are taken): $key"
+		;;
+	esac
+}
+
+# --- templates ---------------------------------------------------------------
+
+# Exits 4 unless `hc templates` lists $1. Never installs a template.
+refuse_missing_template() {
+	local name="$1" listed shipped
+	listed="$(hc templates --json)" || die 4 "hc templates failed, so hc is not usable; nothing was created"
+	# Raw JSON strings fit on one line; each is decoded on its own, so a name
+	# with a newline or any escape still matches exactly.
+	local tok
+	while IFS= read -r tok; do
+		[ -n "$tok" ] || continue
+		[ "$(json_get "$tok" "" && printf .)" != "$name"$'\n.' ] || return 0
+	done <<EOF
+$(json_raw "$listed" '"templates"[]."name"')
+EOF
+	shipped="$(script_dir)/templates"
+	say "template not found: $name (hc templates does not list it); nothing was created"
+	say "templates go in ~/.config/herdr-core/templates/$name.md; copy or link one from $shipped"
+	exit 4
+}
+
+# Reads hc run's first_message record. Sets TASK_SENT (true/false),
+# REASON_JSON (a JSON string or null) and REASON_TEXT (for stderr).
+read_first_message() {
+	TASK_SENT="false" REASON_JSON="null" REASON_TEXT=""
+	if [ -z "$(json_raw "$1" '"first_message"')" ]; then
+		REASON_TEXT="hc did not report whether the task was sent"
+		REASON_JSON="$(json_str "$REASON_TEXT")"
+		return 0
+	fi
+	if [ "$(json_raw "$1" '"first_message"."sent"')" = "true" ]; then
+		TASK_SENT="true"
+		return 0
+	fi
+	# hc's reason is already a JSON value: passed on as written.
+	REASON_JSON="$(json_raw "$1" '"first_message"."reason"')"
+	case "$REASON_JSON" in
+	"" | "{" | "[") REASON_JSON="null" ;;
+	esac
+	if [ "$REASON_JSON" = "null" ]; then
+		REASON_TEXT="hc gave no reason"
+	else
+		REASON_TEXT="$(json_get "$1" '"first_message"."reason"')"
+	fi
 }
 
 # Prints the main checkout's path, so worktrees never nest in a linked one.
@@ -224,36 +392,27 @@ main_checkout() {
 	fi
 }
 
-# Warns only: never writes .gitignore or .git/info/exclude.
-warn_if_worktrees_not_ignored() {
-	local root="$1"
-	git -C "$root" check-ignore -q .worktrees/ && return 0
-	say "warning: .worktrees/ is not ignored in $root; to ignore it, run one of:"
-	printf "  echo '.worktrees/' >> .gitignore            (shared, committed)\n" >&2
-	printf "  echo '.worktrees/' >> .git/info/exclude     (only you)\n" >&2
-}
-
 # --- leftovers ---------------------------------------------------------------
 
-# Set once work starts; used to report what was left behind on failure.
+# Set once the name checks pass, so neither existed before this run; used to
+# report what was left behind on failure.
 WT_PATH=""
 BRANCH=""
-BRANCH_EXISTED=1
-PATH_EXISTED=1
 
 print_leftovers() {
 	local left=0
-	if [ "$PATH_EXISTED" -eq 0 ] && [ -n "$WT_PATH" ] && [ -e "$WT_PATH" ]; then
+	if [ -n "$WT_PATH" ] && [ -e "$WT_PATH" ]; then
 		say "worktree left at $WT_PATH"
 		printf '  ' >&2
 		shell_line git worktree remove "$WT_PATH" >&2
 		left=1
 	fi
-	if [ "$BRANCH_EXISTED" -eq 0 ] && [ -n "$BRANCH" ] &&
-		git show-ref --verify --quiet "refs/heads/$BRANCH" 2>/dev/null; then
+	# close deletes the branch once merged; git branch -d can refuse when the
+	# main checkout is behind origin/<base>.
+	if [ -n "$BRANCH" ] && git show-ref --verify --quiet "refs/heads/$BRANCH" 2>/dev/null; then
 		[ "$left" -eq 1 ] || say "branch left behind: $BRANCH"
 		printf '  ' >&2
-		shell_line git branch -d "$BRANCH" >&2
+		shell_line "$PROG" close "$BRANCH" >&2
 	fi
 }
 
@@ -271,131 +430,45 @@ on_interrupt() {
 	exit 130
 }
 
-# --- base update -------------------------------------------------------------
+# --- origin base -------------------------------------------------------------
 
-# Abort the Base update: nothing was changed and nothing will be created.
-base_update_abort() {
-	say "Base update failed: $*"
-	say "nothing was created; fix it and rerun, or skip it with --no-base-update"
+origin_base_fail() {
+	say "$*"
+	say "nothing was created"
 	exit 3
 }
 
-# git merge flags for the Base update, shared by run and the dry run. They
-# override branch.<base>.mergeOptions and merge.* config (such as --no-commit
-# or --squash) that would leave the merge uncommitted.
-BASE_MERGE_FF=(-q --ff-only --no-squash --commit)
-BASE_MERGE=(-q --no-edit --no-squash --commit)
-
-# Path of the worktree that has refs/heads/$1 checked out, if any.
-worktree_with_branch() {
-	git worktree list --porcelain | awk -v ref="refs/heads/$1" '
-		/^worktree / { wt = substr($0, 10) }
-		$0 == "branch " ref { print wt; exit }
-	'
+# Fetches $1 from origin into refs/remotes/origin/$1, the ref the new branch
+# starts from. Only that remote-tracking ref is written, never a local branch.
+fetch_origin_base() {
+	try_fetch_origin_base "$1" || origin_base_fail "$FETCH_ERROR"
 }
 
-# Decides the Base update step from local state only, shared by run and the
-# dry run so they cannot drift apart. Sets BASE_STEP to one of:
-#   ff-worktree  fast-forward main in BASE_WT, where it is checked out
-#   ff-ref       fast-forward the main ref (checked out nowhere)
-#   merge        merge origin/main into the Base branch in BASE_WT
-#   abort        BASE_ABORT says why; run exits 3
-# The abort cases hold even when the Base branch already has origin/main.
-base_update_step() {
-	local base="$1"
-	BASE_ABORT=""
-	BASE_WT="$(worktree_with_branch "$base")"
+# Like fetch_origin_base, but returns 1 with the cause in FETCH_ERROR.
+FETCH_ERROR=""
+try_fetch_origin_base() {
+	local base="$1" rc
+	FETCH_ERROR=""
 	if ! git remote get-url origin >/dev/null 2>&1; then
-		BASE_STEP="abort" BASE_ABORT="no origin remote"
-	# .worktrees/ holds earlier Herdr subagents' worktrees; it is not dirt.
-	elif [ -n "$BASE_WT" ] && [ -n "$(git -C "$BASE_WT" status --porcelain --untracked-files=normal -- ':(top,exclude).worktrees')" ]; then
-		BASE_STEP="abort" BASE_ABORT="$BASE_WT (where $base is checked out) has uncommitted or untracked changes"
-	elif [ "$base" = "main" ]; then
-		if [ -n "$BASE_WT" ]; then BASE_STEP="ff-worktree"; else BASE_STEP="ff-ref"; fi
-	elif [ -n "$BASE_WT" ]; then
-		BASE_STEP="merge"
-	else
-		BASE_STEP="abort" BASE_ABORT="$base is not checked out in any worktree, so origin/main cannot be merged into it"
+		FETCH_ERROR="no origin remote"
+		return 1
 	fi
-}
-
-# Bring the Base branch up to date with origin/main. Main is fast-forwarded;
-# any other Base branch gets origin/main merged in. Never auto-resolves:
-# anything that is not clean aborts with exit 3 and leaves git as it was.
-base_update() {
-	local base="$1"
-	base_update_step "$base"
-	[ "$BASE_STEP" != "abort" ] || base_update_abort "$BASE_ABORT"
-	say "Base update: fetching origin"
-	git fetch -q origin >&2 || base_update_abort "git fetch origin failed"
-	git rev-parse --verify -q refs/remotes/origin/main >/dev/null ||
-		base_update_abort "origin has no main branch"
-
-	if git merge-base --is-ancestor origin/main "refs/heads/$base"; then
-		say "Base update: $base already has origin/main"
-		return 0
-	fi
-
-	case "$BASE_STEP" in
-	ff-worktree | ff-ref)
-		git merge-base --is-ancestor refs/heads/main origin/main ||
-			base_update_abort "main has diverged from origin/main (not a fast-forward)"
-		say "Base update: fast-forwarding main to origin/main"
-		if [ "$BASE_STEP" = "ff-worktree" ]; then
-			git -C "$BASE_WT" merge "${BASE_MERGE_FF[@]}" origin/main >&2 ||
-				base_update_abort "git merge --ff-only origin/main failed in $BASE_WT"
+	say "fetching $base from origin"
+	if ! git fetch -q --no-tags origin "+refs/heads/$base:refs/remotes/origin/$base" >&2; then
+		# ls-remote --exit-code exits 2 when origin answered without the branch.
+		git ls-remote -q --exit-code --heads origin "refs/heads/$base" >/dev/null 2>&1
+		rc=$?
+		if [ "$rc" -eq 2 ]; then
+			FETCH_ERROR="origin has no branch $base"
 		else
-			git update-ref -m "$PROG: Base update" refs/heads/main \
-				"$(git rev-parse origin/main)" "$(git rev-parse refs/heads/main)" ||
-				base_update_abort "could not fast-forward main"
+			FETCH_ERROR="git fetch origin $base failed"
 		fi
-		;;
-	merge)
-		git merge-tree --write-tree "refs/heads/$base" origin/main >/dev/null 2>&1 ||
-			base_update_abort "merging origin/main into $base would conflict"
-		say "Base update: merging origin/main into $base in $BASE_WT"
-		if ! git -C "$BASE_WT" merge "${BASE_MERGE[@]}" origin/main >&2; then
-			git -C "$BASE_WT" merge --abort >/dev/null 2>&1
-			base_update_abort "git merge origin/main failed in $BASE_WT"
-		fi
-		;;
-	esac
-
-	# Config the flags above do not override could still leave the merge
-	# uncommitted: never start the agent from a Base without origin/main.
-	if ! git merge-base --is-ancestor origin/main "refs/heads/$base"; then
-		if [ -n "$BASE_WT" ]; then
-			# The worktree was clean before, so this only undoes the merge.
-			git -C "$BASE_WT" merge --abort >/dev/null 2>&1 ||
-				git -C "$BASE_WT" reset -q --merge >/dev/null 2>&1
-		fi
-		base_update_abort "$base does not contain origin/main after the update"
+		return 1
 	fi
-}
-
-# The Base update as shell lines, for --dry-run. Reads only local state:
-# whether origin/main has new commits is unknown without the fetch, so the
-# plan shows the step run would take if it does (if not, run skips it).
-# An abort that is already known is noted on stderr; a diverged main or a
-# conflicting merge is only knowable after the fetch.
-base_update_plan() {
-	local base="$1"
-	base_update_step "$base"
-	[ "$BASE_STEP" != "abort" ] ||
-		say "dry run: $BASE_ABORT; run would abort the Base update (exit 3)"
-	shell_line git fetch -q origin
-	case "$BASE_STEP" in
-	ff-worktree) shell_line git -C "$BASE_WT" merge "${BASE_MERGE_FF[@]}" origin/main ;;
-	ff-ref)
-		# One line, guarded as in run: only a fast-forward moves main, and the
-		# old value is main as it is now.
-		printf '%s && %s\n' \
-			"$(shell_line git merge-base --is-ancestor refs/heads/main refs/remotes/origin/main)" \
-			"$(shell_line git update-ref -m "$PROG: Base update" refs/heads/main \
-				refs/remotes/origin/main "$(git rev-parse refs/heads/main)")"
-		;;
-	merge) shell_line git -C "$BASE_WT" merge "${BASE_MERGE[@]}" origin/main ;;
-	esac
+	if ! git rev-parse --verify -q "refs/remotes/origin/$base^{commit}" >/dev/null; then
+		FETCH_ERROR="origin has no branch $base"
+		return 1
+	fi
 }
 
 # --- json --------------------------------------------------------------------
@@ -423,7 +496,122 @@ json_str() {
 	printf '"%s"' "$s"
 }
 
-# --- dry run -----------------------------------------------------------------
+# Reads hc's JSON without jq. A path is keys as JSON strings joined by "."
+# with "[]" for any array element: '"terminals"[]."name"'. Matching is exact,
+# so the same key in a nested object never matches. Prints one value per
+# line: JSON strings decoded, other scalars as written; objects and arrays
+# print "{" or "[" (enough to test that a key is there). Prints nothing
+# unless the whole input is one valid JSON value.
+# shellcheck disable=SC2016 # an awk program: $0 is awk's, not the shell's
+JSON_AWK='
+function ws() {
+	while (pos <= n && index(" \t\n\r", substr(s, pos, 1))) pos++
+}
+function str(   start, c) {
+	start = pos++
+	while (pos <= n) {
+		c = substr(s, pos, 1)
+		if (c == "\\") pos += 2
+		else if (c == "\"") return substr(s, start, ++pos - start)
+		else pos++
+	}
+	bad = 1
+	return ""
+}
+function hit(path, tok) {
+	if (path == want) out = out (raw ? tok : dec(tok)) "\n"
+}
+function value(path,   c, key, rest) {
+	ws()
+	c = substr(s, pos, 1)
+	if (c == "{" || c == "[") {
+		hit(path, c)
+		pos++
+		ws()
+		if (substr(s, pos, 1) == (c == "{" ? "}" : "]")) { pos++; return }
+		while (!bad) {
+			if (c == "{") {
+				ws()
+				if (substr(s, pos, 1) != "\"") { bad = 1; return }
+				key = str()
+				ws()
+				if (substr(s, pos++, 1) != ":") { bad = 1; return }
+				value(path == "" ? key : path "." key)
+			} else value(path "[]")
+			ws()
+			rest = substr(s, pos++, 1)
+			if (rest == ",") continue
+			if (rest != (c == "{" ? "}" : "]")) bad = 1
+			return
+		}
+	} else if (c == "\"") {
+		hit(path, str())
+	} else if (match(substr(s, pos), /^(true|false|null|-?[0-9][0-9.eE+-]*)/)) {
+		hit(path, substr(s, pos, RLENGTH))
+		pos += RLENGTH
+	} else bad = 1
+}
+function hex(h,   i, v) {
+	v = 0
+	for (i = 1; i <= 4; i++) v = v * 16 + index("0123456789abcdef", tolower(substr(h, i, 1))) - 1
+	return v
+}
+function utf8(cp) {
+	if (cp < 128) return cp ? sprintf("%c", cp) : ""
+	if (cp < 2048) return sprintf("%c%c", 192 + int(cp / 64), 128 + cp % 64)
+	if (cp < 65536) return sprintf("%c%c%c", 224 + int(cp / 4096), 128 + int(cp / 64) % 64, 128 + cp % 64)
+	return sprintf("%c%c%c%c", 240 + int(cp / 262144), 128 + int(cp / 4096) % 64, 128 + int(cp / 64) % 64, 128 + cp % 64)
+}
+function dec(tok,   o, i, c, e, cp, lo) {
+	if (substr(tok, 1, 1) != "\"") return tok
+	tok = substr(tok, 2, length(tok) - 2)
+	o = ""
+	for (i = 1; i <= length(tok); i++) {
+		c = substr(tok, i, 1)
+		if (c != "\\") { o = o c; continue }
+		e = substr(tok, ++i, 1)
+		if (e == "n") o = o "\n"
+		else if (e == "t") o = o "\t"
+		else if (e == "r") o = o "\r"
+		else if (e == "b") o = o "\b"
+		else if (e == "f") o = o "\f"
+		else if (e == "u") {
+			cp = hex(substr(tok, i + 1, 4))
+			i += 4
+			if (cp >= 55296 && cp < 56320 && substr(tok, i + 1, 2) == "\\u") {
+				lo = hex(substr(tok, i + 3, 4))
+				if (lo >= 56320 && lo < 57344) {
+					cp = 65536 + (cp - 55296) * 1024 + (lo - 56320)
+					i += 6
+				}
+			}
+			o = o utf8(cp)
+		} else o = o e
+	}
+	return o
+}
+{ s = s $0 "\n" }
+END {
+	want = ENVIRON["JSON_PATH"]
+	raw = ENVIRON["JSON_RAW"] == 1
+	n = length(s)
+	pos = 1
+	value("")
+	ws()
+	if (!bad && pos > n) printf "%s", out
+}'
+
+# json_get <json> <path>: the decoded values at <path>, one per line.
+json_get() {
+	printf '%s\n' "$1" | JSON_PATH="$2" JSON_RAW=0 LC_ALL=C awk "$JSON_AWK"
+}
+
+# json_raw <json> <path>: the values at <path> as JSON text, one per line.
+json_raw() {
+	printf '%s\n' "$1" | JSON_PATH="$2" JSON_RAW=1 LC_ALL=C awk "$JSON_AWK"
+}
+
+# --- shell quoting -----------------------------------------------------------
 
 # Prints $1 quoted for a POSIX-ish shell (bash, zsh): bare when safe, in
 # single quotes otherwise, and as $'...' when it holds a control char (such as
@@ -456,48 +644,60 @@ shell_line() {
 	printf '\n'
 }
 
-# --- task file -------------------------------------------------------------
+# --- task --------------------------------------------------------------------
 
-# Sets $task from a file, or from stdin for "-", byte-for-byte: the trailing
-# "." sentinel keeps $(...) from dropping trailing newlines.
-read_task_file() {
-	local f="$1"
-	if [ "$f" != "-" ]; then
-		[ -f "$f" ] && [ -r "$f" ] || usage_error "cannot read --task-file: $f"
-	fi
-	task="$(cat -- "$f" && printf .)" || usage_error "cannot read --task-file: $f"
+# Sets $task from stdin, byte-for-byte: the trailing "." sentinel keeps $(...)
+# from dropping trailing newlines. A TTY or a blank task is a usage error.
+read_stdin_task() {
+	[ ! -t 0 ] || usage_error "stdin is a terminal; pass the task on stdin (see the heredoc example)"
+	task="$(cat && printf .)" || usage_error "cannot read the task from stdin"
 	task="${task%.}"
 	case "$task" in
 	*[![:space:]]*) ;;
-	*) usage_error "empty task in --task-file: $f" ;;
+	*) usage_error "empty task on stdin" ;;
 	esac
 }
 
-# --- run ---------------------------------------------------------------------
+# The directory this script really lives in, following symlinks (bash 3.2
+# and macOS have no `readlink -f`).
+script_dir() {
+	local src="$0" dir
+	while [ -L "$src" ]; do
+		dir="$(cd "$(dirname "$src")" && pwd -P)"
+		src="$(readlink "$src")"
+		case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+	done
+	cd "$(dirname "$src")" && pwd -P
+}
 
-cmd_run() {
-	local base="main" branch="" task="" have_task=0 update_base=1 arg
-	local harness="claude" model="" effort="" have_model=0 have_effort=0
-	local task_file="" have_task_file=0 json=0 dry_run=0
-	local flag value
+# Prints the text hc run sends for template $1 and task $2: the role's rules
+# (rules/<role>.md next to the script, where the role is the template name up
+# to its last "-"), a blank line, a "Task:" heading and the task. A role
+# without a rules file gets the task alone.
+task_text() {
+	local role="${1%-*}" rules
+	rules="$(script_dir)/rules/$role.md"
+	case "$role" in */* | .*) rules="" ;; esac
+	if [ -n "$rules" ] && [ -f "$rules" ]; then
+		printf '%s\n\nTask:\n%s' "$(cat "$rules")" "$2"
+	else
+		printf '%s' "$2"
+	fi
+}
+
+# --- start -------------------------------------------------------------------
+
+cmd_start() {
+	local base="main" branch="" task="" arg
+	local template="implementer-claude" parent="${HC_TERMINAL_ID:-}" issue=""
+	local flag value user_labels=() label key seen=" "
 
 	while [ "$#" -gt 0 ]; do
 		arg="$1"
 		case "$arg" in
-		--)
-			shift
-			[ "$#" -le 1 ] || usage_error "unexpected argument after the task: $2"
-			if [ "$#" -eq 1 ]; then
-				task="$1"
-				have_task=1
-			fi
-			break
-			;;
-		--no-base-update) update_base=0 ;;
-		--json) json=1 ;;
-		-n | --dry-run) dry_run=1 ;;
-		--base | --branch | --harness | --model | --effort | --task-file | \
-			--base=* | --branch=* | --harness=* | --model=* | --effort=* | --task-file=*)
+		--) usage_error "unexpected --: the task is read from stdin" ;;
+		--base | --branch | --template | --parent | --issue | --label | \
+			--base=* | --branch=* | --template=* | --parent=* | --issue=* | --label=*)
 			# --flag=value and --flag value both end up as $flag and $value.
 			case "$arg" in
 			*=*)
@@ -516,39 +716,40 @@ cmd_run() {
 			case "$flag" in
 			--base) base="$value" ;;
 			--branch) branch="$value" ;;
-			--harness) harness="$value" ;;
-			--task-file)
-				task_file="$value"
-				have_task_file=1
+			--template) template="$value" ;;
+			--parent)
+				[ -n "$value" ] || usage_error "--parent needs a value"
+				parent="$value"
 				;;
-			--model)
-				model="$value"
-				have_model=1
+			--issue)
+				case "$value" in
+				"" | *[!0-9]*) usage_error "--issue takes an issue number (digits only): $value" ;;
+				esac
+				# No leading zeros, so it is also a valid JSON number.
+				issue="$(printf '%s' "$value" | sed 's/^0*//')"
+				[ -n "$issue" ] || usage_error "--issue takes an issue number (digits only): $value"
 				;;
-			--effort)
-				effort="$value"
-				have_effort=1
+			--label)
+				check_user_label "$value"
+				key="${value%%=*}"
+				case "$seen" in
+				*" $key "*) usage_error "--label $key given twice" ;;
+				esac
+				seen="$seen$key "
+				user_labels[${#user_labels[@]}]="$value"
 				;;
 			esac
 			;;
 		-*) usage_error "unknown flag: $arg" ;;
-		*) usage_error "unexpected argument: $arg (put the task after --)" ;;
+		*) usage_error "unexpected argument: $arg (the task is read from stdin)" ;;
 		esac
 		shift
 	done
 
-	if [ "$have_task_file" -eq 1 ]; then
-		[ "$have_task" -eq 0 ] || usage_error "give the task either after -- or with --task-file, not both"
-		read_task_file "$task_file"
-	fi
-	[ "$have_task" -eq 1 ] || [ "$have_task_file" -eq 1 ] || usage_error "missing task"
-	[ -n "$task" ] || usage_error "missing task"
 	[ -n "$branch" ] || usage_error "missing --branch"
 	[ -n "$base" ] || usage_error "--base needs a value"
-	case "$harness" in
-	claude | codex) ;;
-	*) usage_error "unknown --harness (claude or codex): $harness" ;;
-	esac
+	[ -n "$template" ] || usage_error "--template needs a value"
+	read_stdin_task
 
 	command -v git >/dev/null 2>&1 || die 4 "git not found on PATH"
 
@@ -558,6 +759,8 @@ cmd_run() {
 	fi
 	git check-ref-format --branch "$branch" >/dev/null 2>&1 ||
 		usage_error "invalid branch name: $branch"
+	git check-ref-format --branch "$base" >/dev/null 2>&1 ||
+		usage_error "invalid --base branch name: $base"
 
 	local slug hc_name
 	slug="$(slugify "$branch")"
@@ -565,81 +768,49 @@ cmd_run() {
 	hc_name="$(hc_name_for "$slug")"
 	[ -n "$hc_name" ] || usage_error "branch name gives an empty hc name: $branch"
 
-	git rev-parse --git-dir >/dev/null 2>&1 || die 4 "not inside a git repository"
-	command -v hc >/dev/null 2>&1 || die 4 "hc not found on PATH"
-	command -v "$harness" >/dev/null 2>&1 || die 4 "$harness not found on PATH"
-	[ -n "${HC_TERMINAL_ID:-}" ] || die 4 "HC_TERMINAL_ID is not set (run this from a Herdr terminal)"
-	local parent_id="$HC_TERMINAL_ID"
-
-	git show-ref --verify --quiet "refs/heads/$base" ||
-		usage_error "--base must name an existing local branch: $base"
+	require_repo_and_hc
+	refuse_dead_parent "$parent"
+	refuse_missing_template "$template"
 
 	local root
 	root="$(main_checkout)" || exit 4
 	local wt_path="$root/.worktrees/$slug"
 
 	refuse_taken_names "$branch" "$wt_path" "$hc_name"
-	warn_if_worktrees_not_ignored "$root"
 
-	local prompt
-	prompt="$(printf '%s\n\n%s\n%s\n%s' "$task" \
-		"Work only in this worktree ($wt_path, branch $branch). Do not start other agents." \
-		"Report with hc send $parent_id \"<result or blocker>\" when done or stuck, not just to acknowledge." \
-		"Write long answers to a file and send its path.")"
+	# The parent, template and cwd are hc's own terminal fields: not labels.
+	add_label subagent.repo "$root"
+	add_label subagent.branch "$branch"
+	add_label subagent.base "$base"
+	[ -z "$issue" ] || add_label subagent.issue "$issue"
+	# ${a[@]+...}: bash 3.2 calls an empty array unset under set -u.
+	for label in ${user_labels[@]+"${user_labels[@]}"}; do
+		add_label "${label%%=*}" "${label#*=}"
+	done
 
-	# Never empty: bash 3.2 with set -u rejects "${a[@]}" on an empty array.
-	local cmd
-	if [ "$harness" = "codex" ]; then
-		cmd=(codex --no-daemon)
-		[ "$have_model" -eq 0 ] || cmd+=(-m "$model")
-		[ "$have_effort" -eq 0 ] || cmd+=(-c "model_reasoning_effort=$effort")
-	else
-		cmd=(claude)
-		[ "$have_model" -eq 0 ] || cmd+=(--model "$model")
-		[ "$have_effort" -eq 0 ] || cmd+=(--effort "$effort")
-	fi
-
-	if [ "$dry_run" -eq 1 ]; then
-		local plan
-		plan="$(
-			[ "$update_base" -eq 0 ] || base_update_plan "$base"
-			shell_line git worktree add -b "$branch" "$wt_path" "refs/heads/$base"
-			shell_line hc run --bg --name "$hc_name" --cwd "$wt_path" "${cmd[@]}" -- "$prompt"
-		)"
-		if [ "$json" -eq 1 ]; then
-			print_json null "$hc_name" "$branch" "$base" "$wt_path" "$harness" "$have_model" "$model" "$plan"
-		else
-			printf '%s\n' "$plan"
-		fi
-		print_summary "<terminal>" "$hc_name" "$wt_path" "$branch" "$base" "$root" "$harness" 1
-		exit 0
-	fi
-
-	# After the name-conflict checks; Ctrl-C leaves git as git leaves it.
-	if [ "$update_base" -eq 1 ]; then
-		trap on_interrupt INT
-		base_update "$base"
-	fi
-
-	# Work starts here: from now on, failures may leave things behind.
+	# After the name-conflict checks, so neither the branch nor the path
+	# existed; Ctrl-C leaves git as git leaves it.
 	WT_PATH="$wt_path"
 	BRANCH="$branch"
-	if git show-ref --verify --quiet "refs/heads/$branch"; then BRANCH_EXISTED=1; else BRANCH_EXISTED=0; fi
-	if [ -e "$wt_path" ]; then PATH_EXISTED=1; else PATH_EXISTED=0; fi
 	trap on_interrupt INT
+	fetch_origin_base "$base"
 
-	say "creating worktree $wt_path on new branch $branch from $base"
-	git worktree add -b "$branch" "$wt_path" "refs/heads/$base" >&2 ||
+	say "creating worktree $wt_path on new branch $branch from origin/$base"
+	git worktree add -q --no-track -b "$branch" "$wt_path" "refs/remotes/origin/$base" >&2 ||
 		fail_after_start "git worktree add failed"
 
-	say "starting $harness as $hc_name"
-	local hc_output
-	hc_output="$(hc run --bg --name "$hc_name" --cwd "$wt_path" "${cmd[@]}" -- "$prompt")" ||
+	# The template holds only the setup; the role's rules travel with the
+	# task, and hc adds the report-back target.
+	say "starting template $template as $hc_name"
+	local hc_output text
+	text="$(task_text "$template" "$task" && printf .)"
+	text="${text%.}"
+	hc_output="$(hc run --bg --name "$hc_name" --cwd "$wt_path" --parent "$parent" "${LABEL_ARGS[@]}" -- "$template" "$text")" ||
 		fail_after_start "hc run failed"
 
 	# Piped, hc prints JSON; take its "address". Fall back to a bare id.
 	local terminal
-	terminal="$(printf '%s\n' "$hc_output" | sed -n 's/.*"address"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+	terminal="$(json_get "$hc_output" '"address"')"
 	if [ -z "$terminal" ]; then
 		case "$hc_output" in
 		*[!A-Za-z0-9/_-]* | "") ;;
@@ -648,110 +819,188 @@ cmd_run() {
 	fi
 	[ -n "$terminal" ] || fail_after_start "could not read the terminal id from hc run: $hc_output"
 
+	read_first_message "$hc_output"
+
 	trap - INT
-	if [ "$json" -eq 1 ]; then
-		print_json "$(json_str "$terminal")" "$hc_name" "$branch" "$base" "$wt_path" "$harness" "$have_model" "$model"
-	else
-		printf '%s\n' "$terminal"
+	print_json "$terminal" "$hc_name" "$branch" "$base" "$wt_path" "$template" "$issue" "$TASK_SENT" "$REASON_JSON"
+	if [ "$TASK_SENT" = "true" ]; then
+		say "started Herdr subagent $terminal ($hc_name)"
+		return 0
 	fi
-	print_summary "$terminal" "$hc_name" "$wt_path" "$branch" "$base" "$root" "$harness" 0
+	say "task not sent to $terminal ($hc_name): $REASON_TEXT; the terminal and worktree are kept"
+	exit 6
 }
 
-# Prints the --json object. $1 is the terminal as JSON (a string or null);
-# a 9th argument, the dry-run plan (one command per line), adds "commands".
+# Prints the one JSON line on stdout. $7 is the issue number or empty,
+# $8 true/false, $9 already JSON; the labels come from LABELS_JSON.
 print_json() {
-	local terminal_json="$1" name="$2" branch="$3" base="$4" wt_path="$5"
-	local harness="$6" have_model="$7" model="$8" model_json="null" commands=""
-	[ "$have_model" -eq 0 ] || model_json="$(json_str "$model")"
-	if [ "$#" -ge 9 ]; then
-		local line sep=""
-		commands=',"commands":['
-		while IFS= read -r line; do
-			commands="$commands$sep$(json_str "$line")"
-			sep=","
-		done <<EOF
-$9
-EOF
-		commands="$commands]"
-	fi
-	printf '{"terminal":%s,"name":%s,"branch":%s,"base":%s,"worktree":%s,"harness":%s,"model":%s%s}\n' \
-		"$terminal_json" "$(json_str "$name")" "$(json_str "$branch")" \
-		"$(json_str "$base")" "$(json_str "$wt_path")" "$(json_str "$harness")" "$model_json" "$commands"
+	local terminal="$1" name="$2" branch="$3" base="$4" wt_path="$5"
+	local template="$6" issue="${7:-null}" task_sent="$8" reason_json="$9"
+	printf '{"terminal":%s,"name":%s,"branch":%s,"base":%s,"worktree":%s,"template":%s,"issue":%s,"labels":{%s},"task_sent":%s,"reason":%s}\n' \
+		"$(json_str "$terminal")" "$(json_str "$name")" "$(json_str "$branch")" \
+		"$(json_str "$base")" "$(json_str "$wt_path")" "$(json_str "$template")" \
+		"$issue" "$LABELS_JSON" "$task_sent" "$reason_json"
 }
 
-print_summary() {
-	local terminal="$1" name="$2" wt_path="$3" branch="$4" base="$5" root="$6" harness="$7" dry_run="$8"
-	{
-		printf '\n'
-		if [ "$dry_run" -eq 1 ]; then
-			say "dry run: nothing was run; the commands above would start Herdr subagent $name"
-		else
-			say "started Herdr subagent $terminal ($name)"
-		fi
-		printf '  worktree: %s\n' "$wt_path"
-		printf '  branch:   %s (new, from %s)\n' "$branch" "$base"
-		if [ "$dry_run" -eq 1 ]; then
-			# No terminal exists yet, so there is nothing to read, send to or kill.
-			printf '\nNext: run the same command without --dry-run to start it.\n'
-		else
-			printf '\nNext:\n'
-			printf '  hc read %s\n' "$terminal"
-			printf '  hc send %s "<message>"\n' "$terminal"
-			printf '  hc wait %s\n' "$terminal"
-			printf '  hc kill %s\n' "$terminal"
-		fi
-		printf '\n'
-	} >&2
-	if [ "$harness" = "codex" ]; then
-		print_codex_warning "$terminal" "$dry_run" >&2
+# --- close -------------------------------------------------------------------
+
+# Prints the path of the worktree that has $1 checked out, if any.
+worktree_of_branch() {
+	git worktree list --porcelain | awk -v want="branch refs/heads/$1" '
+		/^worktree / { wt = substr($0, 10) }
+		$0 == want { print wt; exit }'
+}
+
+# Prints the subagent.base label in the hc terminal JSON $1, if it has one.
+base_label() {
+	json_get "$1" '"labels"."subagent.base"'
+}
+
+# Deletes branch $1 once merged into a freshly fetched origin/$2: its tip is
+# an ancestor of origin/$2 (PRs merge with merge commits). Otherwise sets
+# KEPT to why it stays; KEPT is empty once the branch is deleted.
+KEPT=""
+delete_branch_if_merged() {
+	local branch="$1" base="$2" tip
+	KEPT=""
+	if ! tip="$(git rev-parse -q --verify "refs/heads/$branch^{commit}")"; then
+		KEPT="no local branch $branch"
+		return 0
+	fi
+	# A stale origin/<base> could say merged when it is not: no fetch, no delete.
+	if ! try_fetch_origin_base "$base"; then
+		KEPT="could not check the merge: $FETCH_ERROR"
+	elif git merge-base --is-ancestor "$tip" "refs/remotes/origin/$base"; then
+		say "deleting branch $branch (merged into origin/$base)"
+		git branch -q -D "$branch" >&2 || die 1 "git branch -D $branch failed; close again to finish"
+		return 0
+	elif [ "$(git ls-remote -q origin "refs/heads/$branch" 2>/dev/null | cut -f1)" = "$tip" ]; then
+		KEPT="not merged into origin/$base; pushed to origin/$branch"
 	else
-		print_claude_warning "$root" >&2
+		KEPT="not merged into origin/$base; not pushed (its tip is not on origin)"
 	fi
+	say "keeping branch $branch: $KEPT"
 }
 
-print_codex_warning() {
-	# Printed literally for the reader, not expanded.
-	# shellcheck disable=SC2016
-	printf '%s\n' 'Codex may ask before each `hc send`. To allow it for good, run:'
-	printf '%s\n' '  mkdir -p ~/.codex/rules'
-	printf '%s\n' "  echo 'prefix_rule(pattern=[\"hc\", \"send\"], decision=\"allow\")' >> ~/.codex/rules/default.rules"
-	# A dry run has no terminal to attach to; the real run prints these lines.
-	[ "$2" -eq 0 ] || return 0
-	printf '%s\n' 'If Codex shows a trust dialog, open it with:'
-	printf '  hc attach %s\n' "$1"
-}
+cmd_close() {
+	local branch="" arg
+	for arg in "$@"; do
+		case "$arg" in
+		-*) usage_error "unknown flag: $arg (close has no flags)" ;;
+		esac
+		[ -z "$branch" ] || usage_error "unexpected argument: $arg (close takes one branch)"
+		branch="$arg"
+	done
+	[ -n "$branch" ] || usage_error "missing branch: close <branch>"
 
-print_claude_warning() {
-	local root="$1"
-	# Printed literally for the reader, not expanded.
-	# shellcheck disable=SC2088
-	local user="~/.claude/settings.json"
-	local proj="$root/.claude/settings.json"
-	local local_settings="$root/.claude/settings.local.json"
-	local w=${#user}
-	[ "${#proj}" -le "$w" ] || w=${#proj}
-	[ "${#local_settings}" -le "$w" ] || w=${#local_settings}
+	command -v git >/dev/null 2>&1 || die 4 "git not found on PATH"
+	git check-ref-format --branch "$branch" >/dev/null 2>&1 ||
+		usage_error "invalid branch name: $branch"
+	require_repo_and_hc
 
-	{
-		# shellcheck disable=SC2016 # literal backticks
-		printf '%s\n' 'Claude may ask before each `hc send`. To allow it for good, add "Bash(hc send:*)" to permissions.allow in one of:'
-		printf '  %-*s   (user: every project)\n' "$w" "$user"
-		printf '  %-*s   (project: shared, committed)\n' "$w" "$proj"
-		printf '  %-*s   (project: only you, not committed)\n' "$w" "$local_settings"
-	} >&2
+	# Everything is looked up before anything is touched.
+	local root wt_path
+	root="$(main_checkout)" || exit 4
+	wt_path="$(worktree_of_branch "$branch")"
+	[ "$wt_path" != "$root" ] ||
+		usage_error "$branch is checked out in the main checkout; close only cleans up a Herdr subagent's worktree"
+	# Only the path start creates; any other worktree is the user's own.
+	local own_path
+	own_path="$root/.worktrees/$(slugify "$branch")"
+	[ -z "$wt_path" ] || [ "$wt_path" = "$own_path" ] ||
+		usage_error "$branch is checked out in $wt_path, not in $own_path; close only cleans up a Herdr subagent's worktree"
+
+	# Finished terminals too: a Herdr subagent ends with its parent.
+	local listed terminals t got base=""
+	listed="$(hc ls --all --json --label "subagent.repo=$root" --label "subagent.branch=$branch")" ||
+		die 4 "hc ls failed, so hc is not usable; nothing was touched"
+	terminals="$(json_get "$listed" '"terminals"[]."address"')"
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
+		got="$(hc get "$t" --json)" || die 4 "hc get $t failed; nothing was touched"
+		[ -n "$base" ] || base="$(base_label "$got")"
+	done <<EOF
+$terminals
+EOF
+	# With no base label left, the base falls back to main, and says so.
+	local fallback=""
+	if [ -z "$base" ]; then
+		base="main"
+		fallback=" (base unknown, checked against main)"
+	fi
+
+	# A local branch alone is still work to finish: a rerun after a failed
+	# delete finds no worktree and maybe no terminal.
+	if [ -z "$wt_path" ] && [ -z "$terminals" ] &&
+		! git show-ref --verify --quiet "refs/heads/$branch"; then
+		say "no worktree, no labelled hc terminal and no local branch $branch"
+		exit 5
+	fi
+
+	if [ -n "$wt_path" ] && [ -d "$wt_path" ] &&
+		[ -n "$(git -C "$wt_path" status --porcelain --untracked-files=all)" ]; then
+		say "worktree $wt_path has uncommitted or untracked changes; nothing was touched"
+		exit 3
+	fi
+
+	local term_removed=false removed=false deleted=false kept_json=null wt_json=null
+	# Kill first and hc rm last: until the end, the terminal record keeps the
+	# subagent.base label a rerun needs.
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
+		say "killing terminal $t"
+		# hc kill waits for the program to end, and succeeds once it has.
+		hc kill "$t" --json >/dev/null || die 1 "hc kill $t failed; close again to finish"
+	done <<EOF
+$terminals
+EOF
+
+	if [ -n "$wt_path" ]; then
+		say "removing worktree $wt_path"
+		if [ -d "$wt_path" ]; then
+			git worktree remove "$wt_path" >&2 ||
+				die 1 "git worktree remove $wt_path failed; close again to finish"
+		else
+			git worktree prune >&2 || die 1 "git worktree prune failed; close again to finish"
+		fi
+		removed=true
+		wt_json="$(json_str "$wt_path")"
+	fi
+
+	delete_branch_if_merged "$branch" "$base"
+	if [ -z "$KEPT" ]; then
+		deleted=true
+	else
+		case "$KEPT" in
+		"no local branch "*) ;;
+		*) KEPT="$KEPT$fallback" ;;
+		esac
+		kept_json="$(json_str "$KEPT")"
+	fi
+
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
+		say "removing terminal $t"
+		hc rm "$t" --json >/dev/null || die 1 "hc rm $t failed; close again to finish"
+		term_removed=true
+	done <<EOF
+$terminals
+EOF
+
+	printf '{"branch":%s,"worktree":%s,"terminal_removed":%s,"worktree_removed":%s,"branch_deleted":%s,"branch_kept_reason":%s}\n' \
+		"$(json_str "$branch")" "$wt_json" "$term_removed" "$removed" "$deleted" "$kept_json"
+	say "closed $branch"
 }
 
 # --- main --------------------------------------------------------------------
 
 main() {
-	local arg seen_run=0
-	# -h/--help wins over everything before "--".
+	local arg
+	# -h/--help wins over everything.
 	for arg in "$@"; do
 		case "$arg" in
-		--) break ;;
-		run) seen_run=1 ;;
 		-h | --help)
-			if [ "$seen_run" -eq 1 ]; then print_run_help; else print_main_help; fi
+			print_help
 			exit 0
 			;;
 		esac
@@ -766,14 +1015,17 @@ main() {
 		;;
 	help)
 		case "$#:${2:-}" in
-		1:) print_main_help ;;
-		2:run) print_run_help ;;
+		1: | 2:start | 2:close) print_help ;;
 		*) usage_error "unknown help topic: ${2:-}" ;;
 		esac
 		;;
-	run)
+	start)
 		shift
-		cmd_run "$@"
+		cmd_start "$@"
+		;;
+	close)
+		shift
+		cmd_close "$@"
 		;;
 	-*) usage_error "unknown flag: $1" ;;
 	*) usage_error "unknown subcommand: $1" ;;

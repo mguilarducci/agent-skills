@@ -12,7 +12,9 @@ mise trust && mise install
 
 ## herdr-subagent
 
-Launches a Claude or Codex Herdr subagent through `hc`, in a new worktree on a new branch.
+Starts a Herdr subagent from an `hc` template, in a new worktree on a new
+branch (`start`), and cleans it up once its work is merged (`close`).
+`herdr-subagent --help` is the full reference, with tips for the parent agent.
 
 ### Install
 
@@ -25,74 +27,108 @@ ln -s "$PWD/scripts/herdr-subagent/herdr-subagent.sh" ~/.local/bin/herdr-subagen
 Run it from a Herdr terminal, inside a git repo:
 
 ```sh
-t=$(herdr-subagent run --branch feat/login -- "Add OAuth login")
-hc wait "$t"
+herdr-subagent start --branch feat/login <<'EOF'
+Add OAuth login. Push the branch and open a PR against main.
+EOF
+hc wait --children any        # returns on the next report, block or exit
+herdr-subagent close feat/login   # once the PR is merged
 ```
+
+### start
 
 - `--branch <name>` (required): the new branch. The worktree goes to
   `<main-checkout-root>/.worktrees/<slug(branch)>`.
-- `--base <branch>`: the Base branch, an existing local branch to start from
-  (default `main`).
-- `--harness claude|codex`: the Harness, the agent program to start (default
-  `claude`). Codex runs as `codex --no-daemon`.
-- `--model <s>`, `--effort <s>`: passed to the harness as-is (Codex gets
-  `-m <s>` and `-c model_reasoning_effort=<s>`). Left out, your harness config
-  applies.
-- Base update: before creating the worktree, it fetches `origin` and brings
-  the Base branch up to date with `origin/main`, in the worktree that has it
-  checked out (`main` is fast-forwarded; any other Base branch gets
-  `origin/main` merged in). If that can't complete cleanly (uncommitted or
-  untracked changes where the Base branch is checked out, a Base branch other
-  than `main` checked out nowhere, a diverged `main`, a conflicting merge, a
-  failed fetch), it exits 3, changes nothing and creates nothing. The first
-  two abort even when the Base branch already has `origin/main`.
-  `--no-base-update` skips it.
-- `--task-file <path|->`: read the task from a file, or from stdin with `-`,
-  instead of after `--`. The task is passed byte-for-byte, trailing newlines
-  included; an empty or whitespace-only task exits 2. Handy for long or
-  multi-line prompts:
+- `--base <branch>`: the Base branch, a branch on `origin` to start from
+  (default `main`). `start` fetches it and creates the new branch from
+  `origin/<base>`; no local branch is ever written. No `origin`, a failed
+  fetch, or a base missing on `origin` exits 3 and creates nothing.
+- `--template <name>`: the hc template to launch from (default
+  `implementer-claude`). Templates are named `<role>-<harness>` and hold only
+  frontmatter: the Harness, model, effort and permissions. The role's fixed
+  rules live in `scripts/herdr-subagent/rules/<role>.md` (the role is the
+  template name up to its last `-`), and `start` sends them ahead of your
+  task, after a blank line and a `Task:` heading; a role with no rules file
+  gets the task alone. hc adds the report-back target. The template must be
+  listed by `hc templates`, which means a file at
+  `~/.config/herdr-core/templates/<name>.md`. Copy or link the shipped ones
+  (only `templates/`; `rules/` stays next to the script):
 
   ```sh
-  herdr-subagent run --branch fix/docs --task-file - <<'EOF'
+  mkdir -p ~/.config/herdr-core/templates
+  ln -s "$PWD"/scripts/herdr-subagent/templates/*.md ~/.config/herdr-core/templates/
+  ```
+
+  `implementer-claude` runs Claude Code with `hc send` and `hc label` pre-allowed.
+  `implementer-codex` runs Codex in its workspace-write sandbox with network
+  access on: from inside that sandbox `hc` can't reach its core otherwise,
+  and the child needs both `hc send` and `hc label`. A narrower alternative,
+  untested: keep network access off and add a Codex rule of your own that
+  allows just the `hc send` and `hc label` prefixes. A missing template
+  exits 4 and creates nothing.
+- `--parent <t>`: the live hc terminal that gets the reports (default
+  `$HC_TERMINAL_ID`). Run it from an hc terminal, under `hc run --bg`, or pass
+  `--parent`; without a live parent, `start` exits 4 and creates nothing.
+- Labels: every Herdr subagent gets `subagent.repo` (the main checkout root),
+  `subagent.branch` and `subagent.base`. `--issue <n>` (digits only) adds
+  `subagent.issue`, and repeatable `--label k=v` adds your own. Keys under
+  `subagent.`, `herdr.` or `where.`, and `where` itself, are reserved (exit 2). Find them with
+  `hc ls --label subagent.repo=<root>`.
+- The task is read only from stdin, byte-for-byte, trailing newlines
+  included. Use a quoted heredoc so quotes, `$` and backticks survive:
+
+  ```sh
+  herdr-subagent start --branch fix/docs <<'EOF'
   Fix the "quoted" $HOME and `backtick` bits in the docs.
   EOF
   ```
 
-- stdout is only the Herdr subagent's terminal id; progress and a summary with
-  the next `hc` commands go to stderr.
-- `--json`: stdout is one JSON object instead,
-  `{"terminal","name","branch","base","worktree","harness","model"}`, with
-  `model` set to `null` when `--model` is left out.
-- `-n`, `--dry-run`: runs nothing that changes state, not even `git fetch`,
-  and prints the plan on stdout instead: one shell-quoted command per line
-  (the Base update, `git worktree add` and the full `hc run`), each ready to
-  paste into a shell. Arguments, prerequisites and name conflicts are still
-  checked (exits 2, 4 and 5); otherwise it exits 0. The Base update lines are
-  worked out from local state: they show the step `run` takes if the fetch
-  brings new commits to `origin/main`, and known causes of an exit-3 abort
-  are noted on stderr. With `--json`, the object has `"terminal": null` and a
-  `"commands"` array of those lines:
-
-  ```sh
-  herdr-subagent run --dry-run --json --branch fix/ci -- "Fix CI"
-  ```
-
-- An existing branch, worktree path or live hc name is never reused: `run`
+  An empty or whitespace-only task, or stdin attached to a terminal, exits 2.
+- On success (exit 0), and for exit 6, stdout is one JSON line; on other
+  failures stdout is empty and stderr explains. The line is
+  `{"terminal","name","branch","base","worktree","template","issue","labels","task_sent","reason"}`,
+  where `issue` is a number or `null`, `labels` holds every label applied,
+  and `reason` is hc's reason when `task_sent` is false and `null`
+  otherwise. stderr carries only
+  progress, errors, leftovers after a failure and one final `started` line.
+- An existing branch, worktree path or live hc name is never reused: `start`
   exits 5 before creating anything. Pick another name and retry.
+
+### close
+
+`herdr-subagent close <branch>` takes no flags. It finds the terminal by its
+`subagent.repo` and `subagent.branch` labels (a finished one too), kills it,
+and removes the worktree. A worktree with uncommitted or untracked changes
+exits 3 and touches nothing. It then fetches the base (the terminal's
+`subagent.base` label, else `main`) and deletes the local branch only when its
+tip is an ancestor of `origin/<base>`, as a merge commit leaves it. Otherwise
+the branch is kept and the reason reported; a failed fetch keeps it too. The
+terminal's hc record is removed last, so a rerun still knows the base. There
+is no `--force`, and rerunning `close` after a partial failure finishes the
+cleanup, even when only the local branch is left. `close` only removes the
+worktree `start` creates, `<main-checkout-root>/.worktrees/<slug(branch)>`: a
+branch checked out in the main checkout or in any other worktree is refused
+(exit 2).
+
+On exit 0 (the branch may be kept), stdout is one JSON line; on other
+failures it is empty and stderr explains. The line is
+`{"branch","worktree","terminal_removed","worktree_removed","branch_deleted","branch_kept_reason"}`.
+`worktree` is `null` when none was found, `terminal_removed` is true once the
+terminal's hc record is removed (a live one is killed first), and
+`branch_kept_reason` is `null` once the branch is deleted.
 
 ### Exit codes
 
-- `0`: launched.
-- `1`: git or hc failed after work started; the leftovers (worktree, branch)
-  are printed with the commands to remove them.
-- `2`: usage error.
-- `3`: the Base update could not complete cleanly.
-- `4`: missing git repo, `hc` (or a failing `hc ls`), the chosen Harness or
-  `$HC_TERMINAL_ID`.
-- `5`: the branch, worktree path or hc name already exists. Pick another name
-  and retry.
-- `130`: interrupted.
+| code | `start` | `close` |
+|---|---|---|
+| 0 | started, task sent | closed (the branch may be kept; see the JSON) |
+| 1 | git or hc failed after work started; leftovers are printed with the commands to remove them | git or hc failed midway; close again to finish |
+| 2 | usage error, including a bad label or a TTY or empty stdin | usage error, including a branch checked out outside its `.worktrees/<slug>` |
+| 3 | no `origin`, a failed fetch, or the base missing on `origin` | dirty worktree; nothing touched |
+| 4 | missing git repo, `hc` (or a failing `hc ls` or `hc templates`), the template, or a live parent | missing git repo or `hc` |
+| 5 | the branch, worktree path or live hc name already exists; pick another branch | no worktree, no labelled terminal and no local branch |
+| 6 | started, but hc didn't deliver the task (`task_sent: false`, for example a trust dialog); the terminal and worktree are kept: read its screen, then send the task yourself | - |
+| 130 | interrupted | interrupted |
 
-After exits 2 to 5, nothing was created.
+After `start` exits 2 to 5, nothing was created.
 
-See `herdr-subagent help run` for every flag.
+See `herdr-subagent --help` for every flag and the tips for agents.
