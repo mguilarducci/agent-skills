@@ -97,14 +97,16 @@ ones. The shipped templates have the child set subagent.pr=<PR URL> when
 it opens a PR.
 
 close: finds the terminal by its subagent.repo and subagent.branch labels
-(a finished one too), kills and removes it, then removes the worktree. A
-worktree with uncommitted or untracked changes exits 3 and touches
-nothing. close fetches the base (the terminal's subagent.base label, else
-main) and deletes the local branch only when its tip is an ancestor of
+(a finished one too), kills it, then removes the worktree. A worktree
+with uncommitted or untracked changes exits 3 and touches nothing. close
+fetches the base (the terminal's subagent.base label, else main) and
+deletes the local branch only when its tip is an ancestor of
 origin/<base>, as a merge commit leaves it. Otherwise the branch is kept
-and the JSON says why; a failed fetch keeps it too. There is no --force.
-Rerun close after a partial failure to finish. The branch checked out in
-the main checkout is refused (exit 2).
+and the JSON says why; a failed fetch keeps it too. The terminal's hc
+record is removed last, so a rerun still knows the base. There is no
+--force. Rerun close after a partial failure to finish, even when only
+the local branch is left. The branch checked out in the main checkout is
+refused (exit 2).
 
 stdout is always one JSON line. start prints:
   {"terminal","name","branch","base","worktree","template","issue",
@@ -134,8 +136,8 @@ Exit codes:
        <base> missing on origin
   4    missing git repo, hc, template      missing git repo or hc
        or live parent
-  5    branch, worktree path or live hc    no worktree and no labelled
-       name already exists                 terminal for that branch
+  5    branch, worktree path or live hc    no worktree, no labelled
+       name already exists                 terminal and no local branch
   6    started, but hc did not deliver     -
        the task (task_sent false)
   130  interrupted                         interrupted
@@ -769,15 +771,21 @@ cmd_close() {
 		die 4 "hc ls failed, so hc is not usable; nothing was touched"
 	terminals="$(printf '%s\n' "$listed" | grep -o '"address"[[:space:]]*:[[:space:]]*"[^"]*"' |
 		sed 's/.*"\([^"]*\)"$/\1/')"
-	for t in $terminals; do
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
 		got="$(hc get "$t" --json)" || die 4 "hc get $t failed; nothing was touched"
 		[ -n "$base" ] || base="$(base_label "$got")"
-	done
+	done <<EOF
+$terminals
+EOF
 	# With no terminal record left, the base falls back to main.
 	[ -n "$base" ] || base="main"
 
-	if [ -z "$wt_path" ] && [ -z "$terminals" ]; then
-		say "no worktree and no labelled hc terminal for branch $branch"
+	# A local branch alone is still work to finish: a rerun after a failed
+	# delete finds no worktree and maybe no terminal.
+	if [ -z "$wt_path" ] && [ -z "$terminals" ] &&
+		! git show-ref --verify --quiet "refs/heads/$branch"; then
+		say "no worktree, no labelled hc terminal and no local branch $branch"
 		exit 5
 	fi
 
@@ -787,14 +795,17 @@ cmd_close() {
 		exit 3
 	fi
 
-	local killed=false removed=false deleted=false kept_json=null wt_json=null
-	for t in $terminals; do
+	local term_removed=false removed=false deleted=false kept_json=null wt_json=null
+	# Kill first and hc rm last: until the end, the terminal record keeps the
+	# subagent.base label a rerun needs.
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
 		say "killing terminal $t"
 		# hc kill waits for the program to end, and succeeds once it has.
 		hc kill "$t" --json >/dev/null || die 1 "hc kill $t failed; close again to finish"
-		hc rm "$t" --json >/dev/null || die 1 "hc rm $t failed; close again to finish"
-		killed=true
-	done
+	done <<EOF
+$terminals
+EOF
 
 	if [ -n "$wt_path" ]; then
 		say "removing worktree $wt_path"
@@ -815,8 +826,17 @@ cmd_close() {
 		kept_json="$(json_str "$KEPT")"
 	fi
 
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
+		say "removing terminal $t"
+		hc rm "$t" --json >/dev/null || die 1 "hc rm $t failed; close again to finish"
+		term_removed=true
+	done <<EOF
+$terminals
+EOF
+
 	printf '{"branch":%s,"worktree":%s,"terminal_killed":%s,"worktree_removed":%s,"branch_deleted":%s,"branch_kept_reason":%s}\n' \
-		"$(json_str "$branch")" "$wt_json" "$killed" "$removed" "$deleted" "$kept_json"
+		"$(json_str "$branch")" "$wt_json" "$term_removed" "$removed" "$deleted" "$kept_json"
 	say "closed $branch"
 }
 

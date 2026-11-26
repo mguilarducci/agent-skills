@@ -88,14 +88,16 @@ herdr-subagent close feat/login   # once the PR is merged
 ### close
 
 `herdr-subagent close <branch>` takes no flags. It finds the terminal by its
-`subagent.repo` and `subagent.branch` labels (a finished one too), kills and
-removes it, and removes the worktree. A worktree with uncommitted or untracked
-changes exits 3 and touches nothing. It then fetches the base (the terminal's
+`subagent.repo` and `subagent.branch` labels (a finished one too), kills it,
+and removes the worktree. A worktree with uncommitted or untracked changes
+exits 3 and touches nothing. It then fetches the base (the terminal's
 `subagent.base` label, else `main`) and deletes the local branch only when its
 tip is an ancestor of `origin/<base>`, as a merge commit leaves it. Otherwise
-the branch is kept and the reason reported; a failed fetch keeps it too. There
+the branch is kept and the reason reported; a failed fetch keeps it too. The
+terminal's hc record is removed last, so a rerun still knows the base. There
 is no `--force`, and rerunning `close` after a partial failure finishes the
-cleanup. The branch checked out in the main checkout is refused (exit 2).
+cleanup, even when only the local branch is left. The branch checked out in
+the main checkout is refused (exit 2).
 
 stdout is one JSON line,
 `{"branch","worktree","terminal_killed","worktree_removed","branch_deleted","branch_kept_reason"}`.
@@ -112,7 +114,7 @@ the branch is deleted.
 | 2 | usage error, including a bad label or a TTY or empty stdin | usage error, including the main checkout's branch |
 | 3 | no `origin`, a failed fetch, or the base missing on `origin` | dirty worktree; nothing touched |
 | 4 | missing git repo, `hc` (or a failing `hc ls` or `hc templates`), the template, or a live parent | missing git repo or `hc` |
-| 5 | the branch, worktree path or live hc name already exists; pick another branch | no worktree and no labelled terminal for that branch |
+| 5 | the branch, worktree path or live hc name already exists; pick another branch | no worktree, no labelled terminal and no local branch |
 | 6 | started, but hc didn't deliver the task (`task_sent: false`, for example a trust dialog); the terminal and worktree are kept: read its screen, then send the task yourself | - |
 | 130 | interrupted | interrupted |
 

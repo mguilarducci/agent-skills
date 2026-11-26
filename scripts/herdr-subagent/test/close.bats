@@ -194,22 +194,70 @@ has_branch() {
 	make_worktree b
 	merge_on_origin b
 	with_terminal live
-	export HC_STUB_RM_EXIT=1
+	export HC_STUB_KILL_EXIT=1
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 1 ]
 	[ -z "$output" ]
 	[ -d "$REPO/.worktrees/b" ]
 	has_branch b
 
+	# hc rm is the last step: everything else is done when it fails.
+	export HC_STUB_KILL_EXIT=0 HC_STUB_RM_EXIT=1
+	run --separate-stderr "$SCRIPT" close b
+	[ "$status" -eq 1 ]
+	[ -z "$output" ]
+	[ ! -e "$REPO/.worktrees/b" ]
+	run ! has_branch b
+
 	export HC_STUB_RM_EXIT=0
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":true,"worktree_removed":true,"branch_deleted":true,"branch_kept_reason":null}' ]
+	[ "$output" = '{"branch":"b","worktree":null,"terminal_killed":true,"worktree_removed":false,"branch_deleted":false,"branch_kept_reason":"no local branch b"}' ]
 
 	# The terminal record is gone now; a third close finds nothing.
 	no_terminal
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 5 ]
+}
+
+@test "a failed branch delete: the hc record is kept, and a rerun finishes even with only the branch left" {
+	make_worktree b
+	merge_on_origin b
+	with_terminal live
+	# A held ref lock makes `git branch -D` fail.
+	: >"$REPO/.git/refs/heads/b.lock"
+	run --separate-stderr "$SCRIPT" close b
+	[ "$status" -eq 1 ]
+	[ -z "$output" ]
+	[ "$(cat "$HC_LOG/kill-calls")" = "kill t5 --json" ]
+	# hc rm comes last, so the terminal record (and its base label) survives.
+	[ ! -e "$HC_LOG/rm-calls" ]
+	[ ! -e "$REPO/.worktrees/b" ]
+	has_branch b
+
+	rm "$REPO/.git/refs/heads/b.lock"
+	no_terminal
+	run --separate-stderr "$SCRIPT" close b
+	[ "$status" -eq 0 ]
+	[ "$output" = '{"branch":"b","worktree":null,"terminal_killed":false,"worktree_removed":false,"branch_deleted":true,"branch_kept_reason":null}' ]
+	run ! has_branch b
+}
+
+@test "a rerun after a failed branch delete still uses the base label" {
+	git push -q origin main:develop
+	make_worktree b
+	merge_on_origin b develop
+	with_terminal live develop
+	: >"$REPO/.git/refs/heads/b.lock"
+	run --separate-stderr "$SCRIPT" close b
+	[ "$status" -eq 1 ]
+	[ ! -e "$HC_LOG/rm-calls" ]
+
+	rm "$REPO/.git/refs/heads/b.lock"
+	run --separate-stderr "$SCRIPT" close b
+	[ "$status" -eq 0 ]
+	[ "$output" = '{"branch":"b","worktree":null,"terminal_killed":true,"worktree_removed":false,"branch_deleted":true,"branch_kept_reason":null}' ]
+	[ "$(cat "$HC_LOG/rm-calls")" = "rm t5 --json" ]
 }
 
 @test "close works from a linked worktree too" {
