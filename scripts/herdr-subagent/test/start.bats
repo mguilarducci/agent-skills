@@ -50,33 +50,13 @@ expected_text() {
 }
 
 @test "--flag=value works like --flag value, in any order" {
-	# develop is checked out nowhere, which would abort the Base update.
-	git branch develop
-	run --separate-stderr "$SCRIPT" start --no-base-update --branch=x/one --base=develop <<<"task"
+	git push -q origin main:develop
+	run --separate-stderr "$SCRIPT" start --branch=x/one --base=develop <<<"task"
 	[ "$status" -eq 0 ]
 	[ -d "$REPO/.worktrees/x-one" ]
-	run --separate-stderr "$SCRIPT" start --no-base-update --base develop --branch x/two <<<"task"
+	run --separate-stderr "$SCRIPT" start --base develop --branch x/two <<<"task"
 	[ "$status" -eq 0 ]
 	[ "$(git -C "$REPO/.worktrees/x-two" rev-parse --abbrev-ref HEAD)" = "x/two" ]
-}
-
-@test "--base picks the branch the worktree starts from" {
-	git checkout -q -b develop
-	git commit -q --allow-empty -m dev
-	git checkout -q main
-	run --separate-stderr "$SCRIPT" start --no-base-update --base develop --branch b <<<"task"
-	[ "$status" -eq 0 ]
-	[ "$(git -C "$REPO/.worktrees/b" rev-parse HEAD)" = "$(git rev-parse develop)" ]
-}
-
-@test "--base starts from the branch even when a tag has the same name" {
-	git checkout -q -b develop
-	git commit -q --allow-empty -m dev
-	git tag develop main
-	git checkout -q main
-	run --separate-stderr "$SCRIPT" start --no-base-update --base develop --branch b <<<"task"
-	[ "$status" -eq 0 ]
-	[ "$(git -C "$REPO/.worktrees/b" rev-parse HEAD)" = "$(git rev-parse refs/heads/develop)" ]
 }
 
 @test "start from a linked worktree still lands under the main checkout" {

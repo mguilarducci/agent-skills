@@ -95,10 +95,10 @@ EOF
 	odd="$SANDBOX/re\"po\\x"
 	git clone -q "$SANDBOX/origin.git" "$odd" 2>/dev/null
 	cd "$odd"
-	git branch 'we"ird' main
+	git push -q origin 'main:we"ird'
 	model="$(printf 'a"b\\c\td\001e')"
 	run --separate-stderr "$SCRIPT" start --harness claude --model "$model" \
-		--no-base-update --base 'we"ird' --branch b <<<"task"
+		--base 'we"ird' --branch b <<<"task"
 	[ "$status" -eq 0 ]
 	[ "$(printf '%s' "$output" | jq -c .)" = "$(jq -nc --arg wt "$odd/.worktrees/b" --arg m "$model" \
 		'{terminal:"t9z",name:"b",branch:"b",base:"we\"ird",worktree:$wt,harness:"claude",model:$m}')" ]

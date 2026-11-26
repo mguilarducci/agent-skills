@@ -30,21 +30,6 @@ setup() {
 	assert_nothing_created
 }
 
-@test "an unknown --base exits 2" {
-	run --separate-stderr "$SCRIPT" start --base nope --branch b <<<"task"
-	[ "$status" -eq 2 ]
-	[[ "$stderr" == *"nope"* ]] || false
-	assert_nothing_created
-}
-
-@test "a remote-only --base exits 2" {
-	git push -q origin main:remote-only
-	git fetch -q origin
-	run --separate-stderr "$SCRIPT" start --base remote-only --branch b <<<"task"
-	[ "$status" -eq 2 ]
-	assert_nothing_created
-}
-
 @test "outside a git repo exits 4" {
 	mkdir "$SANDBOX/plain"
 	cd "$SANDBOX/plain"

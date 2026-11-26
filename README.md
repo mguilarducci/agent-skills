@@ -34,22 +34,15 @@ hc wait "$t"
 
 - `--branch <name>` (required): the new branch. The worktree goes to
   `<main-checkout-root>/.worktrees/<slug(branch)>`.
-- `--base <branch>`: the Base branch, an existing local branch to start from
-  (default `main`).
+- `--base <branch>`: the Base branch, a branch on `origin` to start from
+  (default `main`). `start` fetches it and creates the new branch from
+  `origin/<base>`; no local branch is ever written. No `origin`, a failed
+  fetch, or a base missing on `origin` exits 3 and creates nothing.
 - `--harness claude|codex`: the Harness, the agent program to start (default
   `claude`). Codex runs as `codex --no-daemon`.
 - `--model <s>`, `--effort <s>`: passed to the harness as-is (Codex gets
   `-m <s>` and `-c model_reasoning_effort=<s>`). Left out, your harness config
   applies.
-- Base update: before creating the worktree, it fetches `origin` and brings
-  the Base branch up to date with `origin/main`, in the worktree that has it
-  checked out (`main` is fast-forwarded; any other Base branch gets
-  `origin/main` merged in). If that can't complete cleanly (uncommitted or
-  untracked changes where the Base branch is checked out, a Base branch other
-  than `main` checked out nowhere, a diverged `main`, a conflicting merge, a
-  failed fetch), it exits 3, changes nothing and creates nothing. The first
-  two abort even when the Base branch already has `origin/main`.
-  `--no-base-update` skips it.
 - The task is read only from stdin, byte-for-byte, trailing newlines
   included. Use a quoted heredoc so quotes, `$` and backticks survive:
 
@@ -73,7 +66,7 @@ hc wait "$t"
 - `1`: git or hc failed after work started; the leftovers (worktree, branch)
   are printed with the commands to remove them.
 - `2`: usage error, including a TTY or empty stdin.
-- `3`: the Base update could not complete cleanly.
+- `3`: no `origin`, a failed fetch, or the base missing on `origin`.
 - `4`: missing git repo, `hc` (or a failing `hc ls`), the chosen Harness or
   `$HC_TERMINAL_ID`.
 - `5`: the branch, worktree path or hc name already exists. Pick another name
