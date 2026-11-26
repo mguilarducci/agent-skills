@@ -17,7 +17,7 @@ Start every subagent with a fresh context window.
 
 Communication to and from subagents should be sparse. Communicate primarily through **context pointers**: to the spec, tickets, research notes, and previous commits. Don't duplicate information already available via pointers.
 
-**Implementer subagents** are **Herdr subagents**, launched with `herdr-subagent run` (see `herdr-subagent help run`). Each one runs in the background in its own terminal, so launch as many as the **frontier** allows for maximum concurrency. Wait on one with `hc wait <terminal>`; it reports back with `hc send` when done or stuck.
+**Implementer subagents** are **Herdr subagents**, launched with `herdr-subagent run` (see `herdr-subagent help run`). `herdr-subagent` is the script at `../../scripts/herdr-subagent/herdr-subagent.sh`, relative to this skill's directory; call it by that path, not from `PATH`. Each one runs in the background in its own terminal, so launch as many as the **frontier** allows for maximum concurrency. Wait on one with `hc wait <terminal>`; it reports back with `hc send` when done or stuck.
 
 ## Steps
 
