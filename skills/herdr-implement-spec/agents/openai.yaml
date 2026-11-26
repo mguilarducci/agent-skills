@@ -1,0 +1,5 @@
+interface:
+  display_name: "Herdr Implement Spec"
+  short_description: "Implement the result of /to-spec and /to-tickets in code, with Herdr subagents."
+policy:
+  allow_implicit_invocation: false
