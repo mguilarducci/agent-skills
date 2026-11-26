@@ -12,7 +12,7 @@ mise trust && mise install
 
 ## herdr-subagent
 
-Launches a Claude or Codex Herdr subagent through `hc`, in a new worktree on a new branch.
+Launches a Herdr subagent from an `hc` template, in a new worktree on a new branch.
 
 ### Install
 
@@ -38,11 +38,19 @@ hc wait "$t"
   (default `main`). `start` fetches it and creates the new branch from
   `origin/<base>`; no local branch is ever written. No `origin`, a failed
   fetch, or a base missing on `origin` exits 3 and creates nothing.
-- `--harness claude|codex`: the Harness, the agent program to start (default
-  `claude`). Codex runs as `codex --no-daemon`.
-- `--model <s>`, `--effort <s>`: passed to the harness as-is (Codex gets
-  `-m <s>` and `-c model_reasoning_effort=<s>`). Left out, your harness config
-  applies.
+- `--template <name>`: the hc template to launch from (default
+  `implementer`). The template sets the Harness, model, effort, permissions
+  and the child's fixed rules, and hc adds the report-back target, so only
+  your task is sent. It must be listed by `hc templates`, which means a file
+  at `~/.config/herdr-core/templates/<name>.md`. Copy or link the shipped ones:
+
+  ```sh
+  mkdir -p ~/.config/herdr-core/templates
+  ln -s "$PWD"/scripts/herdr-subagent/templates/*.md ~/.config/herdr-core/templates/
+  ```
+
+  `implementer` runs Claude Code and `implementer-codex` runs Codex. A
+  missing template exits 4 and creates nothing.
 - The task is read only from stdin, byte-for-byte, trailing newlines
   included. Use a quoted heredoc so quotes, `$` and backticks survive:
 
@@ -54,8 +62,9 @@ hc wait "$t"
 
   An empty or whitespace-only task, or stdin attached to a terminal, exits 2.
 - stdout is always one JSON line,
-  `{"terminal","name","branch","base","worktree","harness","model"}`, with
-  `model` set to `null` when `--model` is left out. stderr carries only
+  `{"terminal","name","branch","base","worktree","template","task_sent","reason"}`,
+  where `reason` is hc's reason when `task_sent` is false and `null`
+  otherwise. stderr carries only
   progress, errors, leftovers after a failure and one final `started` line.
 - An existing branch, worktree path or live hc name is never reused: `start`
   exits 5 before creating anything. Pick another name and retry.
@@ -67,10 +76,13 @@ hc wait "$t"
   are printed with the commands to remove them.
 - `2`: usage error, including a TTY or empty stdin.
 - `3`: no `origin`, a failed fetch, or the base missing on `origin`.
-- `4`: missing git repo, `hc` (or a failing `hc ls`), the chosen Harness or
-  `$HC_TERMINAL_ID`.
+- `4`: missing git repo, `hc` (or a failing `hc ls` or `hc templates`), the
+  template or `$HC_TERMINAL_ID`.
 - `5`: the branch, worktree path or hc name already exists. Pick another name
   and retry.
+- `6`: started, but hc didn't deliver the task (`task_sent: false`, for
+  example a trust dialog). The terminal and worktree are kept: read its
+  screen, then send the task yourself.
 - `130`: interrupted.
 
 After exits 2 to 5, nothing was created.

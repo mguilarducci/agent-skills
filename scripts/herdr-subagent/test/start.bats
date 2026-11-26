@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# `start` end to end, with hc and claude stubbed on PATH.
+# `start` end to end, with hc stubbed on PATH.
 
 load test_helper
 
@@ -7,15 +7,7 @@ setup() {
 	setup_sandbox
 }
 
-expected_text() {
-	# $1 task, $2 worktree path, $3 branch
-	printf '%s\n\n%s\n%s\n%s' "$1" \
-		"Work only in this worktree ($2, branch $3). Do not start other agents." \
-		'Report with hc send tparent "<result or blocker>" when done or stuck, not just to acknowledge.' \
-		"Write long answers to a file and send its path."
-}
-
-@test "start creates the worktree and launches claude through hc with the exact argv" {
+@test "start creates the worktree and launches the template through hc with the exact argv" {
 	run --separate-stderr "$SCRIPT" start --branch feat/login-OAuth <<<"Add OAuth login"
 	[ "$status" -eq 0 ]
 
@@ -30,22 +22,14 @@ expected_text() {
 	[ "$(hc_arg 4)" = "feat-login-oauth" ]
 	[ "$(hc_arg 5)" = "--cwd" ]
 	[ "$(hc_arg 6)" = "$wt" ]
-	[ "$(hc_arg 7)" = "claude" ]
-	[ "$(hc_arg 8)" = "--" ]
-	[ "$(hc_arg 9)" = "$(expected_text $'Add OAuth login\n' "$wt" feat/login-OAuth)" ]
+	[ "$(hc_arg 7)" = "--" ]
+	[ "$(hc_arg 8)" = "implementer" ]
+	[ "$(hc_arg 9)" = "Add OAuth login" ]
 }
 
-@test "the parent id in the report text is the literal HC_TERMINAL_ID" {
-	# shellcheck disable=SC2016 # $HOME must stay literal
-	HC_TERMINAL_ID='vps/t3 $HOME' run --separate-stderr "$SCRIPT" start --branch b <<<"task"
-	[ "$status" -eq 0 ]
-	# shellcheck disable=SC2016
-	[[ "$(hc_arg 9)" == *'hc send vps/t3 $HOME "<result or blocker>"'* ]] || false
-}
-
-@test "a bare id from hc run is accepted too" {
+@test "a bare id from hc run is accepted too, though without a first_message" {
 	HC_STUB_OUTPUT="t4k" run --separate-stderr "$SCRIPT" start --branch b <<<"task"
-	[ "$status" -eq 0 ]
+	[ "$status" -eq 6 ]
 	[ "$(printf '%s' "$output" | jq -r .terminal)" = "t4k" ]
 }
 
@@ -158,6 +142,10 @@ if [ "$1" = ls ]; then
 	echo '{"terminals":[]}'
 	exit 0
 fi
+if [ "$1" = templates ]; then
+	echo '{"templates":[{"name":"implementer","description":"d","command":"claude"}]}'
+	exit 0
+fi
 kill -INT "$PPID"
 sleep 1
 echo '{"address":"t1"}'
@@ -171,6 +159,12 @@ STUB
 @test "runs under macOS stock /bin/bash" {
 	run --separate-stderr /bin/bash "$SCRIPT" start --branch feat/login-OAuth <<<"task"
 	[ "$status" -eq 0 ]
-	[ "$(printf '%s' "$output" | jq -r .terminal)" = "t9z" ]
+	[ "$(printf '%s' "$output" | jq -c '[.terminal, .task_sent]')" = '["t9z",true]' ]
 	[ "$(hc_arg 4)" = "feat-login-oauth" ]
+
+	rm -rf "${HC_LOG:?}"/*
+	HC_STUB_OUTPUT='{"address":"t1","first_message":{"sent":false,"reason":"blocked (permission)"}}' \
+		run --separate-stderr /bin/bash "$SCRIPT" start --branch other <<<"task"
+	[ "$status" -eq 6 ]
+	[ "$(printf '%s' "$output" | jq -r .reason)" = "blocked (permission)" ]
 }

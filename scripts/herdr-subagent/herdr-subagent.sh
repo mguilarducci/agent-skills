@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# herdr-subagent: launch a Herdr subagent (Claude Code or Codex) in its own worktree.
+# herdr-subagent: launch a Herdr subagent from an hc template in its own worktree.
 #
 # Runs on macOS's stock bash 3.2: no associative arrays, no ${x,,}.
-# Needs only git, hc and claude (or codex) at runtime.
+# Needs only git and hc at runtime; the Harness is the template's concern.
 
 set -u
 
@@ -29,8 +29,8 @@ Usage:
   $PROG --version
 
 Commands:
-  start  Create a worktree on a new branch and start the Harness in it
-         through hc; the task is read from stdin
+  start  Create a worktree on a new branch and start an hc template in
+         it; the task is read from stdin
   help   Show this help; \`help start\` shows the start flags
 
 Flags:
@@ -50,7 +50,7 @@ Examples:
   Fix the "quoted" \$HOME and \`backtick\` bits in the docs.
   EOF
   $PROG start --base develop --branch fix/parser <task.md
-  $PROG start --harness codex --effort high --branch fix/ci <<<"Fix CI"
+  $PROG start --template implementer-codex --branch fix/ci <<<"Fix CI"
 
 Usage:
   $PROG start [flags] <<'EOF'
@@ -62,12 +62,7 @@ Flags:
                     ASCII letters, digits and . _ / - only.
   --base <branch>   Base branch: a branch on origin to start from
                     (default: main).
-  --harness <claude|codex>
-                    Harness: the agent program to start (default: claude).
-  --model <s>       Passed as-is: claude --model <s>, codex -m <s>.
-  --effort <s>      Passed as-is: claude --effort <s>,
-                    codex -c model_reasoning_effort=<s>.
-                    Left out, the harness's own config applies.
+  --template <name> hc template to launch from (default: implementer).
   -h, --help        Show this help.
 
 Flags take \`--flag value\` or \`--flag=value\`, in any order.
@@ -81,10 +76,20 @@ start fetches <base> from origin and creates the new branch from
 origin/<base>. No local branch is ever written. The worktree goes to
 <main-checkout-root>/.worktrees/<slug(branch)>.
 
+Templates: the Herdr subagent is started from an hc template and the task.
+The template sets the Harness, model, effort, permissions and the child's
+fixed rules; hc adds the report-back target, so the script sends only the
+task. It must be listed by \`hc templates\`: a Markdown file in
+~/.config/herdr-core/templates/<name>.md. This repo ships
+scripts/herdr-subagent/templates/implementer.md (Claude Code) and
+implementer-codex.md (Codex): copy or link them there. The script never
+installs a template; a different setup is a different template.
+
 stdout is always one JSON line:
-  {"terminal","name","branch","base","worktree","harness","model"}
-model is null without --model. stderr carries only progress, errors,
-leftovers after a failure and one final "started" line.
+  {"terminal","name","branch","base","worktree","template","task_sent","reason"}
+reason is hc's reason when task_sent is false, null otherwise. stderr
+carries only progress, errors, leftovers after a failure and one final
+"started" line.
 
 Exit codes:
   0    launched
@@ -92,10 +97,12 @@ Exit codes:
   2    usage error, including a TTY or empty stdin; nothing was created
   3    no origin, a failed fetch, or <base> missing on origin; nothing
        was created
-  4    missing git repo, hc (or a failing hc ls), the chosen Harness or
-       \$HC_TERMINAL_ID; nothing was created
+  4    missing git repo, hc (or a failing hc ls or hc templates), the
+       template or \$HC_TERMINAL_ID; nothing was created
   5    branch, worktree path or hc name already exists; nothing was created:
        pick another name and retry (an existing branch is never reused)
+  6    started, but hc did not deliver the task (task_sent false); the
+       terminal and worktree are kept: read its screen, then send the task
   130  interrupted
 
 Report issues: $ISSUES_URL
@@ -181,6 +188,62 @@ refuse_taken_names() {
 		exit_name_taken "live hc terminal named $hc_name"
 	fi
 	return 0
+}
+
+# --- templates ---------------------------------------------------------------
+
+# Exits 4 unless `hc templates` lists $1. Never installs a template.
+refuse_missing_template() {
+	local name="$1" listed shipped
+	listed="$(hc templates --json)" || die 4 "hc templates failed, so hc is not usable; nothing was created"
+	# Compared as JSON text, so names with quotes or backslashes match too.
+	if printf '%s\n' "$listed" | sed 's/"name"[[:space:]]*:[[:space:]]*/"name":/g' |
+		grep -qF -- "\"name\":$(json_str "$name")"; then
+		return 0
+	fi
+	shipped="$(cd "$(dirname "$0")" && pwd -P)/templates"
+	say "template not found: $name (hc templates does not list it); nothing was created"
+	say "templates go in ~/.config/herdr-core/templates/$name.md; copy or link one from $shipped"
+	exit 4
+}
+
+# Reads hc run's first_message record. Sets TASK_SENT (true/false),
+# REASON_JSON (a JSON string or null) and REASON_TEXT (for stderr).
+read_first_message() {
+	local rest
+	TASK_SENT="false" REASON_JSON="null" REASON_TEXT=""
+	case "$1" in
+	*'"first_message"'*) ;;
+	*)
+		REASON_TEXT="hc did not report whether the task was sent"
+		REASON_JSON="$(json_str "$REASON_TEXT")"
+		return 0
+		;;
+	esac
+	# The first "sent" and "reason" keys after "first_message" are its own.
+	rest="${1#*\"first_message\"}"
+	case "$rest" in
+	*'"sent"'*)
+		if printf '%s' "${rest#*\"sent\"}" | grep -Eq '^[[:space:]]*:[[:space:]]*true'; then
+			TASK_SENT="true"
+			return 0
+		fi
+		;;
+	esac
+	case "$rest" in
+	*'"reason"'*)
+		REASON_JSON="$(printf '%s' "${rest#*\"reason\"}" |
+			sed -nE '1s/^[[:space:]]*:[[:space:]]*("([^"\\]|\\.)*"|null).*/\1/p')"
+		;;
+	esac
+	[ -n "$REASON_JSON" ] || REASON_JSON="null"
+	if [ "$REASON_JSON" = "null" ]; then
+		REASON_TEXT="hc gave no reason"
+	else
+		REASON_TEXT="${REASON_JSON#\"}"
+		REASON_TEXT="${REASON_TEXT%\"}"
+		REASON_TEXT="$(printf '%s' "$REASON_TEXT" | sed -e 's/\\"/"/g' -e 's/\\\\/\\/g')"
+	fi
 }
 
 # Prints the main checkout's path, so worktrees never nest in a linked one.
@@ -346,15 +409,15 @@ read_stdin_task() {
 
 cmd_start() {
 	local base="main" branch="" task="" arg
-	local harness="claude" model="" effort="" have_model=0 have_effort=0
+	local template="implementer"
 	local flag value
 
 	while [ "$#" -gt 0 ]; do
 		arg="$1"
 		case "$arg" in
 		--) usage_error "unexpected --: the task is read from stdin" ;;
-		--base | --branch | --harness | --model | --effort | \
-			--base=* | --branch=* | --harness=* | --model=* | --effort=*)
+		--base | --branch | --template | \
+			--base=* | --branch=* | --template=*)
 			# --flag=value and --flag value both end up as $flag and $value.
 			case "$arg" in
 			*=*)
@@ -373,15 +436,7 @@ cmd_start() {
 			case "$flag" in
 			--base) base="$value" ;;
 			--branch) branch="$value" ;;
-			--harness) harness="$value" ;;
-			--model)
-				model="$value"
-				have_model=1
-				;;
-			--effort)
-				effort="$value"
-				have_effort=1
-				;;
+			--template) template="$value" ;;
 			esac
 			;;
 		-*) usage_error "unknown flag: $arg" ;;
@@ -392,10 +447,7 @@ cmd_start() {
 
 	[ -n "$branch" ] || usage_error "missing --branch"
 	[ -n "$base" ] || usage_error "--base needs a value"
-	case "$harness" in
-	claude | codex) ;;
-	*) usage_error "unknown --harness (claude or codex): $harness" ;;
-	esac
+	[ -n "$template" ] || usage_error "--template needs a value"
 	read_stdin_task
 
 	command -v git >/dev/null 2>&1 || die 4 "git not found on PATH"
@@ -417,33 +469,14 @@ cmd_start() {
 
 	git rev-parse --git-dir >/dev/null 2>&1 || die 4 "not inside a git repository"
 	command -v hc >/dev/null 2>&1 || die 4 "hc not found on PATH"
-	command -v "$harness" >/dev/null 2>&1 || die 4 "$harness not found on PATH"
 	[ -n "${HC_TERMINAL_ID:-}" ] || die 4 "HC_TERMINAL_ID is not set (run this from a Herdr terminal)"
-	local parent_id="$HC_TERMINAL_ID"
+	refuse_missing_template "$template"
 
 	local root
 	root="$(main_checkout)" || exit 4
 	local wt_path="$root/.worktrees/$slug"
 
 	refuse_taken_names "$branch" "$wt_path" "$hc_name"
-
-	local prompt
-	prompt="$(printf '%s\n\n%s\n%s\n%s' "$task" \
-		"Work only in this worktree ($wt_path, branch $branch). Do not start other agents." \
-		"Report with hc send $parent_id \"<result or blocker>\" when done or stuck, not just to acknowledge." \
-		"Write long answers to a file and send its path.")"
-
-	# Never empty: bash 3.2 with set -u rejects "${a[@]}" on an empty array.
-	local cmd
-	if [ "$harness" = "codex" ]; then
-		cmd=(codex --no-daemon)
-		[ "$have_model" -eq 0 ] || cmd+=(-m "$model")
-		[ "$have_effort" -eq 0 ] || cmd+=(-c "model_reasoning_effort=$effort")
-	else
-		cmd=(claude)
-		[ "$have_model" -eq 0 ] || cmd+=(--model "$model")
-		[ "$have_effort" -eq 0 ] || cmd+=(--effort "$effort")
-	fi
 
 	# After the name-conflict checks; Ctrl-C leaves git as git leaves it.
 	trap on_interrupt INT
@@ -460,9 +493,11 @@ cmd_start() {
 	git worktree add -q --no-track -b "$branch" "$wt_path" "refs/remotes/origin/$base" >&2 ||
 		fail_after_start "git worktree add failed"
 
-	say "starting $harness as $hc_name"
+	# hc joins the template body and the task into the first message and adds
+	# the report-back target; the script sends only the task.
+	say "starting template $template as $hc_name"
 	local hc_output
-	hc_output="$(hc run --bg --name "$hc_name" --cwd "$wt_path" "${cmd[@]}" -- "$prompt")" ||
+	hc_output="$(hc run --bg --name "$hc_name" --cwd "$wt_path" -- "$template" "$task")" ||
 		fail_after_start "hc run failed"
 
 	# Piped, hc prints JSON; take its "address". Fall back to a bare id.
@@ -476,19 +511,26 @@ cmd_start() {
 	fi
 	[ -n "$terminal" ] || fail_after_start "could not read the terminal id from hc run: $hc_output"
 
+	read_first_message "$hc_output"
+
 	trap - INT
-	print_json "$terminal" "$hc_name" "$branch" "$base" "$wt_path" "$harness" "$have_model" "$model"
-	say "started Herdr subagent $terminal ($hc_name)"
+	print_json "$terminal" "$hc_name" "$branch" "$base" "$wt_path" "$template" "$TASK_SENT" "$REASON_JSON"
+	if [ "$TASK_SENT" = "true" ]; then
+		say "started Herdr subagent $terminal ($hc_name)"
+		return 0
+	fi
+	say "task not sent to $terminal ($hc_name): $REASON_TEXT; the terminal and worktree are kept"
+	exit 6
 }
 
-# Prints the one JSON line on stdout; model is null without --model.
+# Prints the one JSON line on stdout. $7 is true/false, $8 already JSON.
 print_json() {
 	local terminal="$1" name="$2" branch="$3" base="$4" wt_path="$5"
-	local harness="$6" have_model="$7" model="$8" model_json="null"
-	[ "$have_model" -eq 0 ] || model_json="$(json_str "$model")"
-	printf '{"terminal":%s,"name":%s,"branch":%s,"base":%s,"worktree":%s,"harness":%s,"model":%s}\n' \
+	local template="$6" task_sent="$7" reason_json="$8"
+	printf '{"terminal":%s,"name":%s,"branch":%s,"base":%s,"worktree":%s,"template":%s,"task_sent":%s,"reason":%s}\n' \
 		"$(json_str "$terminal")" "$(json_str "$name")" "$(json_str "$branch")" \
-		"$(json_str "$base")" "$(json_str "$wt_path")" "$(json_str "$harness")" "$model_json"
+		"$(json_str "$base")" "$(json_str "$wt_path")" "$(json_str "$template")" \
+		"$task_sent" "$reason_json"
 }
 
 # --- main --------------------------------------------------------------------
