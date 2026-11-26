@@ -17,8 +17,8 @@ setup_sandbox() {
 	# prints $HC_STUB_OUTPUT and exits with $HC_STUB_EXIT.
 	# `hc ls` is answered from $HC_STUB_LS (default: no terminals) and only
 	# counted in $HC_LOG/ls-calls, so it never clobbers the `hc run` argv.
-	# `hc templates` is answered from $HC_STUB_TEMPLATES (default: implementer
-	# and implementer-codex) and only counted in $HC_LOG/templates-calls.
+	# `hc templates` is answered from $HC_STUB_TEMPLATES (default:
+	# implementer-claude, implementer-codex and reviewer-claude) and only counted in $HC_LOG/templates-calls.
 	# `hc get <t>` is answered from $HC_STUB_GET (default: a live terminal
 	# whose address is <t>), exits $HC_STUB_GET_EXIT, and is only logged in
 	# $HC_LOG/get-calls.
@@ -31,7 +31,7 @@ if [ "${1:-}" = "templates" ]; then
 	if [ -n "${HC_STUB_TEMPLATES+x}" ]; then
 		printf '%s\n' "$HC_STUB_TEMPLATES"
 	else
-		printf '%s\n' '{"templates":[{"name":"implementer","description":"d","command":"claude","error":null},{"name":"implementer-codex","description":"d","command":"codex --no-daemon","error":null}]}'
+		printf '%s\n' '{"templates":[{"name":"implementer-claude","description":"d","command":"claude","error":null},{"name":"implementer-codex","description":"d","command":"codex --no-daemon","error":null},{"name":"reviewer-claude","description":"d","command":"claude","error":null}]}'
 	fi
 	exit "${HC_STUB_TEMPLATES_EXIT:-0}"
 fi
@@ -137,4 +137,15 @@ assert_nothing_created() {
 	[ ! -e "$REPO/.worktrees" ]
 	[ ! -e "$HC_LOG/argc" ]
 	[ "$(git -C "$REPO" branch --format='%(refname:short)')" = "main" ]
+}
+
+# The task text hc run got: the argv element after the template.
+hc_task_text() {
+	cat "$HC_LOG/arg.$(cat "$HC_LOG/argc")"
+}
+
+# The text start sends for the implementer role: the shipped rules, a blank
+# line, a Task: heading and the task.
+implementer_text() {
+	printf '%s\n\nTask:\n%s' "$(cat "$BATS_TEST_DIRNAME/../rules/implementer.md")" "$1"
 }

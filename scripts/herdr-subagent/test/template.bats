@@ -8,11 +8,36 @@ setup() {
 	WT="$REPO/.worktrees/b"
 }
 
-@test "implementer is the default template, and the task is its only argument" {
+@test "implementer-claude is the default template, and it gets the implementer rules followed by the task" {
 	run --separate-stderr "$SCRIPT" start --branch b <<<"task"
 	[ "$status" -eq 0 ]
-	[ "$(hc_template)" = "implementer" ]
-	[ "$(hc_argv | sed -n '/^--$/,$p')" = "$(printf '%s\n' -- implementer task '')" ]
+	[ "$(hc_template)" = "implementer-claude" ]
+	text="$(hc_task_text)"
+	[[ "$text" == "You are a Herdr subagent"* ]] || false
+	[[ "$text" == *"Do not start other agents"* ]] || false
+	[[ "$text" == *$'\n\nTask:\ntask' ]] || false
+	[ "$text" = "$(implementer_text task)" ]
+}
+
+@test "every template of a role gets that role's rules" {
+	run --separate-stderr "$SCRIPT" start --template implementer-codex --branch b <<<"task"
+	[ "$status" -eq 0 ]
+	[ "$(hc_task_text)" = "$(implementer_text task)" ]
+}
+
+@test "a role with no rules file sends only the task" {
+	run --separate-stderr "$SCRIPT" start --template reviewer-claude --branch b <<<"review it"
+	[ "$status" -eq 0 ]
+	[ "$(hc_template)" = "reviewer-claude" ]
+	[ "$(hc_task_text)" = "review it" ]
+}
+
+@test "the rules are found when the script is run through a symlink" {
+	mkdir -p "$SANDBOX/bin"
+	ln -s "$SCRIPT" "$SANDBOX/bin/herdr-subagent"
+	run --separate-stderr "$SANDBOX/bin/herdr-subagent" start --branch b <<<"task"
+	[ "$status" -eq 0 ]
+	[ "$(hc_task_text)" = "$(implementer_text task)" ]
 }
 
 @test "--template picks the hc template, in either flag form" {
@@ -98,21 +123,20 @@ setup() {
 	[ "$status" -eq 0 ]
 }
 
-@test "the shipped templates have frontmatter, pre-allow hc, and carry the fixed rules" {
+@test "the shipped templates are frontmatter only, and pre-allow hc" {
 	dir="$BATS_TEST_DIRNAME/../templates"
-	for name in implementer implementer-codex; do
+	[ "$(cd "$dir" && printf '%s\n' *.md)" = "$(printf '%s\n' implementer-claude.md implementer-codex.md)" ]
+	for name in implementer-claude implementer-codex; do
 		f="$dir/$name.md"
-		[ -f "$f" ]
 		[ "$(sed -n 1p "$f")" = "---" ]
 		grep -qx "name: $name" "$f"
 		grep -q '^description: ' "$f"
-		for rule in "only in this worktree" "Do not start other agents" "Commit" \
-			"write it to a file" "when you are done or stuck" "subagent.pr"; do
-			grep -q "$rule" "$f"
-		done
+		# Nothing after the closing ---: the rules live in rules/.
+		[ "$(sed -n '$p' "$f")" = "---" ]
+		[ "$(grep -c '^---$' "$f")" -eq 2 ]
 	done
 	# Claude Code allows the two commands by name.
-	cmd="$(sed -n 's/^command: //p' "$dir/implementer.md")"
+	cmd="$(sed -n 's/^command: //p' "$dir/implementer-claude.md")"
 	[[ "$cmd" == "claude "* ]] || false
 	[[ "$cmd" == *"'Bash(hc send:*)'"* ]] || false
 	[[ "$cmd" == *"'Bash(hc label:*)'"* ]] || false
@@ -124,12 +148,29 @@ setup() {
 	[[ "$cmd" == *"sandbox_workspace_write.network_access=true"* ]] || false
 }
 
+@test "the shipped implementer rules are plain Markdown with the fixed rules" {
+	f="$BATS_TEST_DIRNAME/../rules/implementer.md"
+	[ "$(sed -n 1p "$f")" != "---" ]
+	for rule in "only in this worktree" "Do not start other agents" "Commit" \
+		"write it to a file" "when you are done or stuck" "subagent.pr"; do
+		grep -q "$rule" "$f"
+	done
+}
+
+@test "the task keeps its trailing newlines after the rules" {
+	printf 'ends with two\n\n' >"$SANDBOX/task.txt"
+	run --separate-stderr "$SCRIPT" start --branch b <"$SANDBOX/task.txt"
+	[ "$status" -eq 0 ]
+	[ "$(tail -c 23 "$HC_LOG/arg.$(cat "$HC_LOG/argc")" | od -c)" = "$(printf '\n\nTask:\nends with two\n\n' | od -c)" ]
+}
+
 @test "help start explains --template and where templates come from" {
 	run --separate-stderr "$SCRIPT" help start
 	[ "$status" -eq 0 ]
 	# shellcheck disable=SC2088 # the help shows ~ literally
-	for s in "--template <name>" "default: implementer" "hc templates" \
-		"~/.config/herdr-core/templates" "templates/implementer.md" "6 "; do
+	for s in "--template <name>" "default: implementer-claude" "hc templates" \
+		"~/.config/herdr-core/templates" "templates/implementer-claude.md" \
+		"rules/<role>.md" "Task:" "6 "; do
 		[[ "$output" == *"$s"* ]] || false
 	done
 	for s in "--harness" "--model" "--effort"; do

@@ -8,7 +8,9 @@ setup() {
 	WT="$REPO/.worktrees/b"
 }
 
-# The file holding the last hc argv element: the task handed to the template.
+# The file holding the last hc argv element: the text handed to the template.
+# These tests use reviewer-claude, a role with no rules file, so that text is
+# the task alone.
 hc_task_file() {
 	printf '%s' "$HC_LOG/arg.$(cat "$HC_LOG/argc")"
 }
@@ -18,14 +20,14 @@ hc_task_file() {
 Fix "the" parser's $HOME handling.
 Run `make test` and \n keep 'it' green.
 EOF
-	run --separate-stderr "$SCRIPT" start --branch b <"$SANDBOX/task.txt"
+	run --separate-stderr "$SCRIPT" start --template reviewer-claude --branch b <"$SANDBOX/task.txt"
 	[ "$status" -eq 0 ]
 	cmp "$(hc_task_file)" "$SANDBOX/task.txt"
 }
 
 @test "the stdin task keeps every trailing newline, and works without one" {
 	printf 'ends with two\n\n' >"$SANDBOX/task.txt"
-	run --separate-stderr "$SCRIPT" start --branch b <"$SANDBOX/task.txt"
+	run --separate-stderr "$SCRIPT" start --template reviewer-claude --branch b <"$SANDBOX/task.txt"
 	[ "$status" -eq 0 ]
 	cmp "$(hc_task_file)" "$SANDBOX/task.txt"
 
@@ -33,7 +35,7 @@ EOF
 	git worktree prune
 	git branch -D -q b
 	printf 'no newline' >"$SANDBOX/task.txt"
-	run --separate-stderr "$SCRIPT" start --branch b <"$SANDBOX/task.txt"
+	run --separate-stderr "$SCRIPT" start --template reviewer-claude --branch b <"$SANDBOX/task.txt"
 	[ "$status" -eq 0 ]
 	cmp "$(hc_task_file)" "$SANDBOX/task.txt"
 }
@@ -64,7 +66,7 @@ EOF
 	[ "$status" -eq 0 ]
 	[ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" = "1" ]
 	[ "$(printf '%s' "$output" | jq -c .)" = "$(jq -nc --arg wt "$WT" --arg repo "$REPO" \
-		'{terminal:"t9z",name:"b",branch:"b",base:"main",worktree:$wt,template:"implementer",issue:null,labels:{"subagent.repo":$repo,"subagent.branch":"b","subagent.base":"main"},task_sent:true,reason:null}')" ]
+		'{terminal:"t9z",name:"b",branch:"b",base:"main",worktree:$wt,template:"implementer-claude",issue:null,labels:{"subagent.repo":$repo,"subagent.branch":"b","subagent.base":"main"},task_sent:true,reason:null}')" ]
 }
 
 @test "stderr has progress and one started line, and no summary or hints" {

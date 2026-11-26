@@ -24,7 +24,7 @@ The branch on `origin` a Herdr subagent's worktree is created from; `main` unles
 _Avoid_: Source branch, parent branch, Base update (the v1 step that rewrote the local base branch; retired)
 
 **Template**:
-An `hc` template a Herdr subagent is started from: a Markdown file whose frontmatter `command` sets the Harness, model, effort and permissions, and whose body holds the child's fixed rules. A different setup is a different Template.
+An `hc` template a Herdr subagent is started from: a frontmatter-only Markdown file named `<role>-<harness>`, whose `command` sets the Harness, model, effort and permissions. The role's fixed rules are not in it: they live in `scripts/herdr-subagent/rules/<role>.md` and are sent with the task. A different setup is a different Template.
 _Avoid_: Preset, profile, harness config
 
 **Close**:
