@@ -25,7 +25,10 @@ ln -s "$PWD/scripts/herdr-subagent/herdr-subagent.sh" ~/.local/bin/herdr-subagen
 Run it from a Herdr terminal, inside a git repo:
 
 ```sh
-t=$(herdr-subagent run --branch feat/login -- "Add OAuth login")
+t=$(herdr-subagent start --branch feat/login <<'EOF' | jq -r .terminal
+Add OAuth login.
+EOF
+)
 hc wait "$t"
 ```
 
@@ -47,37 +50,21 @@ hc wait "$t"
   failed fetch), it exits 3, changes nothing and creates nothing. The first
   two abort even when the Base branch already has `origin/main`.
   `--no-base-update` skips it.
-- `--task-file <path|->`: read the task from a file, or from stdin with `-`,
-  instead of after `--`. The task is passed byte-for-byte, trailing newlines
-  included; an empty or whitespace-only task exits 2. Handy for long or
-  multi-line prompts:
+- The task is read only from stdin, byte-for-byte, trailing newlines
+  included. Use a quoted heredoc so quotes, `$` and backticks survive:
 
   ```sh
-  herdr-subagent run --branch fix/docs --task-file - <<'EOF'
+  herdr-subagent start --branch fix/docs <<'EOF'
   Fix the "quoted" $HOME and `backtick` bits in the docs.
   EOF
   ```
 
-- stdout is only the Herdr subagent's terminal id; progress and a summary with
-  the next `hc` commands go to stderr.
-- `--json`: stdout is one JSON object instead,
+  An empty or whitespace-only task, or stdin attached to a terminal, exits 2.
+- stdout is always one JSON line,
   `{"terminal","name","branch","base","worktree","harness","model"}`, with
-  `model` set to `null` when `--model` is left out.
-- `-n`, `--dry-run`: runs nothing that changes state, not even `git fetch`,
-  and prints the plan on stdout instead: one shell-quoted command per line
-  (the Base update, `git worktree add` and the full `hc run`), each ready to
-  paste into a shell. Arguments, prerequisites and name conflicts are still
-  checked (exits 2, 4 and 5); otherwise it exits 0. The Base update lines are
-  worked out from local state: they show the step `run` takes if the fetch
-  brings new commits to `origin/main`, and known causes of an exit-3 abort
-  are noted on stderr. With `--json`, the object has `"terminal": null` and a
-  `"commands"` array of those lines:
-
-  ```sh
-  herdr-subagent run --dry-run --json --branch fix/ci -- "Fix CI"
-  ```
-
-- An existing branch, worktree path or live hc name is never reused: `run`
+  `model` set to `null` when `--model` is left out. stderr carries only
+  progress, errors, leftovers after a failure and one final `started` line.
+- An existing branch, worktree path or live hc name is never reused: `start`
   exits 5 before creating anything. Pick another name and retry.
 
 ### Exit codes
@@ -85,7 +72,7 @@ hc wait "$t"
 - `0`: launched.
 - `1`: git or hc failed after work started; the leftovers (worktree, branch)
   are printed with the commands to remove them.
-- `2`: usage error.
+- `2`: usage error, including a TTY or empty stdin.
 - `3`: the Base update could not complete cleanly.
 - `4`: missing git repo, `hc` (or a failing `hc ls`), the chosen Harness or
   `$HC_TERMINAL_ID`.
@@ -95,4 +82,4 @@ hc wait "$t"
 
 After exits 2 to 5, nothing was created.
 
-See `herdr-subagent help run` for every flag.
+See `herdr-subagent help start` for every flag.

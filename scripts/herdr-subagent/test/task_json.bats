@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# --task-file and --json, with hc and claude stubbed on PATH.
+# The task from stdin and the JSON line on stdout, with hc and claude stubbed.
 
 load test_helper
 
@@ -21,13 +21,12 @@ hc_text() {
 	hc_arg "$(cat "$HC_LOG/argc")"
 }
 
-@test "--task-file - passes a multi-line task with quotes, \$ and backticks byte-for-byte" {
-	run --separate-stderr "$SCRIPT" run --branch b --task-file - <<'EOF'
+@test "a multi-line task with quotes, \$ and backticks on stdin is passed byte-for-byte" {
+	run --separate-stderr "$SCRIPT" start --branch b <<'EOF'
 Fix "the" parser's $HOME handling.
 Run `make test` and \n keep 'it' green.
 EOF
 	[ "$status" -eq 0 ]
-	[ "$output" = "t9z" ]
 	expected="$(printf '%s\n%s\n\n\n%s' \
 		"Fix \"the\" parser's \$HOME handling." \
 		"Run \`make test\` and \\n keep 'it' green." \
@@ -35,78 +34,71 @@ EOF
 	[ "$(hc_text)" = "$expected" ]
 }
 
-@test "--task-file <path> reads the task from that file" {
-	printf 'from a file\n' >"$SANDBOX/task.txt"
-	run --separate-stderr "$SCRIPT" run --task-file="$SANDBOX/task.txt" --branch b
-	[ "$status" -eq 0 ]
-	[ "$(hc_text)" = "$(printf 'from a file\n\n\n%s' "$(report_text)")" ]
-}
-
-@test "--task-file keeps every trailing newline of the task" {
+@test "the stdin task keeps every trailing newline, and works without one" {
 	printf 'ends with two\n\n' >"$SANDBOX/task.txt"
-	run --separate-stderr "$SCRIPT" run --task-file "$SANDBOX/task.txt" --branch b
+	run --separate-stderr "$SCRIPT" start --branch b <"$SANDBOX/task.txt"
 	[ "$status" -eq 0 ]
 	[ "$(hc_text)" = "$(printf 'ends with two\n\n\n\n%s' "$(report_text)")" ]
+
+	rm -rf "$WT" "${HC_LOG:?}"/*
+	git worktree prune
+	git branch -D -q b
+	printf 'no newline' >"$SANDBOX/task.txt"
+	run --separate-stderr "$SCRIPT" start --branch b <"$SANDBOX/task.txt"
+	[ "$status" -eq 0 ]
+	[ "$(hc_text)" = "$(printf 'no newline\n\n%s' "$(report_text)")" ]
 }
 
-@test "--task-file together with a task after -- exits 2" {
-	printf 'x\n' >"$SANDBOX/task.txt"
-	run --separate-stderr "$SCRIPT" run --branch b --task-file "$SANDBOX/task.txt" -- "task"
-	[ "$status" -eq 2 ]
-	[ -z "$output" ]
-	[[ "$stderr" == *"not both"* ]] || false
-	assert_nothing_created
-}
-
-@test "a missing, unreadable, empty or whitespace-only --task-file exits 2" {
+@test "an empty or whitespace-only stdin exits 2 and creates nothing" {
 	: >"$SANDBOX/empty.txt"
 	printf '\n\n' >"$SANDBOX/newlines.txt"
 	printf ' \t\n \n' >"$SANDBOX/blank.txt"
-	mkdir "$SANDBOX/dir"
-	printf 'x\n' >"$SANDBOX/locked.txt"
-	chmod 000 "$SANDBOX/locked.txt"
-	for f in "$SANDBOX/nope.txt" "$SANDBOX/empty.txt" "$SANDBOX/newlines.txt" "$SANDBOX/blank.txt" "$SANDBOX/dir" "$SANDBOX/locked.txt"; do
-		run --separate-stderr "$SCRIPT" run --branch b --task-file "$f"
+	for f in /dev/null "$SANDBOX/empty.txt" "$SANDBOX/newlines.txt" "$SANDBOX/blank.txt"; do
+		run --separate-stderr "$SCRIPT" start --branch b <"$f"
 		[ "$status" -eq 2 ]
 		[ -z "$output" ]
-		[[ "$stderr" == *"$f"* ]] || false
+		[[ "$stderr" == *"empty task on stdin"* ]] || false
 	done
-	run --separate-stderr "$SCRIPT" run --branch b --task-file - </dev/null
-	[ "$status" -eq 2 ]
 	assert_nothing_created
 }
 
-@test "--task-file without a value exits 2" {
-	run --separate-stderr "$SCRIPT" run --branch b --task-file
+@test "stdin attached to a TTY exits 2 and creates nothing" {
+	# script(1) gives the command a pseudo-terminal as stdin.
+	run script -q /dev/null "$SCRIPT" start --branch b </dev/null
 	[ "$status" -eq 2 ]
+	[[ "$output" == *"stdin is a terminal"* ]] || false
 	assert_nothing_created
 }
 
-@test "--json prints one JSON object on stdout with model null when --model is left out" {
-	run --separate-stderr "$SCRIPT" run --json --branch b -- "task"
+@test "stdout is one JSON line with model null when --model is left out" {
+	run --separate-stderr "$SCRIPT" start --branch b <<<"task"
 	[ "$status" -eq 0 ]
 	[ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" = "1" ]
 	[ "$(printf '%s' "$output" | jq -c .)" = "$(jq -nc --arg wt "$WT" \
 		'{terminal:"t9z",name:"b",branch:"b",base:"main",worktree:$wt,harness:"claude",model:null}')" ]
-	[[ "$stderr" == *"started Herdr subagent t9z"* ]] || false
 }
 
-@test "help run documents --task-file with a heredoc example, and --json" {
-	run --separate-stderr "$SCRIPT" help run
+@test "stderr has progress and one started line, and no summary or hints" {
+	run --separate-stderr "$SCRIPT" start --branch b <<<"task"
 	[ "$status" -eq 0 ]
-	[[ "$output" == *"--task-file - <<'EOF'"* ]] || false
-	[[ "$output" == *"--task-file <path|->"* ]] || false
-	[[ "$output" == *"--json"* ]] || false
+	[ "$(printf '%s\n' "$stderr" | grep -c '^herdr-subagent: started ')" = "1" ]
+	[[ "$stderr" == *"herdr-subagent: started Herdr subagent t9z (b)"* ]] || false
+	for s in "Next:" "hc read" "hc send" "hc wait" "hc kill" "hc attach" \
+		"may ask" "settings.json" "not ignored" "worktree:" "branch:"; do
+		[[ "$stderr" != *"$s"* ]] || false
+	done
+	# Only "herdr-subagent: ..." lines: no blank lines or indented blocks.
+	[ "$(printf '%s\n' "$stderr" | grep -vc '^herdr-subagent: ')" = 0 ]
 }
 
-@test "--json escapes \" and \\ in the base and worktree path, and control chars in the model" {
+@test "the JSON escapes \" and \\ in the base and worktree path, and control chars in the model" {
 	odd="$SANDBOX/re\"po\\x"
 	git clone -q "$SANDBOX/origin.git" "$odd" 2>/dev/null
 	cd "$odd"
 	git branch 'we"ird' main
 	model="$(printf 'a"b\\c\td\001e')"
-	run --separate-stderr "$SCRIPT" run --json --harness claude --model "$model" \
-		--no-base-update --base 'we"ird' --branch b -- "task"
+	run --separate-stderr "$SCRIPT" start --harness claude --model "$model" \
+		--no-base-update --base 'we"ird' --branch b <<<"task"
 	[ "$status" -eq 0 ]
 	[ "$(printf '%s' "$output" | jq -c .)" = "$(jq -nc --arg wt "$odd/.worktrees/b" --arg m "$model" \
 		'{terminal:"t9z",name:"b",branch:"b",base:"we\"ird",worktree:$wt,harness:"claude",model:$m}')" ]

@@ -13,50 +13,49 @@ ISSUES_URL="https://github.com/mguilarducci/agent-skills/issues"
 # --- help --------------------------------------------------------------------
 
 print_main_help() {
-	cat <<EOF
+	cat <<HELP
 $PROG - launch a Herdr subagent in its own worktree
 
 Examples:
-  t=\$($PROG run --branch feat/login -- "Add OAuth login")
-  $PROG run --base develop --branch fix/parser -- "Fix the v1.2 parser"
-  hc wait "\$t"
+  $PROG start --branch feat/login <<'EOF'
+  Add OAuth login.
+  EOF
 
 Usage:
-  $PROG run [flags] -- "<task>"
-  $PROG help [run]
+  $PROG start [flags] <<'EOF'
+  <task>
+  EOF
+  $PROG help [start]
   $PROG --version
 
 Commands:
-  run    Create a worktree on a new branch and start the Harness in it through hc
-  help   Show this help; \`help run\` shows the run flags
+  start  Create a worktree on a new branch and start the Harness in it
+         through hc; the task is read from stdin
+  help   Show this help; \`help start\` shows the start flags
 
 Flags:
   -h, --help   Show help
   --version    Print the version
 
 Report issues: $ISSUES_URL
-EOF
+HELP
 }
 
-# The indented "EOF" below is example text, not the end token.
-# shellcheck disable=SC1039
-print_run_help() {
-	cat <<EOF
-$PROG run - start a Herdr subagent in a new worktree
+print_start_help() {
+	cat <<HELP
+$PROG start - start a Herdr subagent in a new worktree
 
 Examples:
-  t=\$($PROG run --branch feat/login -- "Add OAuth login")
-  $PROG run --base develop --branch fix/parser -- "Fix the v1.2 parser"
-  $PROG run --branch=issue-6 -- "Implement issue #6"
-  $PROG run --harness codex --effort high --branch fix/ci -- "Fix CI"
-  $PROG run --dry-run --json --branch fix/ci -- "Fix CI"
-  $PROG run --branch fix/docs --task-file - <<'EOF'
+  $PROG start --branch fix/docs <<'EOF'
   Fix the "quoted" \$HOME and \`backtick\` bits in the docs.
   EOF
+  $PROG start --base develop --branch fix/parser <task.md
+  $PROG start --harness codex --effort high --branch fix/ci <<<"Fix CI"
 
 Usage:
-  $PROG run [flags] -- "<task>"
-  $PROG run [flags] --task-file <path|->
+  $PROG start [flags] <<'EOF'
+  <task>
+  EOF
 
 Flags:
   --branch <name>   New branch for the worktree (required).
@@ -70,28 +69,23 @@ Flags:
                     codex -c model_reasoning_effort=<s>.
                     Left out, the harness's own config applies.
   --no-base-update  Skip the Base update (see below).
-  --task-file <path|->
-                    Read the task from a file, or from stdin with -,
-                    instead of after --. The task is passed byte-for-byte,
-                    trailing newlines included; an empty or
-                    whitespace-only task exits 2.
-  --json            Print one JSON object on stdout instead of the id:
-                    {"terminal","name","branch","base","worktree",
-                    "harness","model"}; model is null without --model.
-  -n, --dry-run     Run nothing that changes state (not even git fetch);
-                    print the plan on stdout, one shell-quoted command per
-                    line, and exit 0. Arguments, prerequisites and names
-                    are still checked (exits 2, 4, 5). With --json, the
-                    object has "terminal":null and "commands":[...].
   -h, --help        Show this help.
 
-Flags take \`--flag value\` or \`--flag=value\`, in any order before \`--\`.
+Flags take \`--flag value\` or \`--flag=value\`, in any order.
+
+The task is read from stdin, byte-for-byte, trailing newlines included.
+Use a quoted heredoc (<<'EOF') so quotes, \$ and backticks reach the
+Herdr subagent unchanged. An empty or whitespace-only task, or stdin
+attached to a terminal, exits 2.
 
 The worktree goes to <main-checkout-root>/.worktrees/<slug(branch)>.
-stdout carries only the Herdr subagent's terminal id (or the --json
-object); progress, errors and the summary go to stderr.
 
-Base update: before creating the worktree, run fetches origin and brings
+stdout is always one JSON line:
+  {"terminal","name","branch","base","worktree","harness","model"}
+model is null without --model. stderr carries only progress, errors,
+leftovers after a failure and one final "started" line.
+
+Base update: before creating the worktree, start fetches origin and brings
 the Base branch up to date with origin/main, in the worktree that has it
 checked out. main is fast-forwarded; any other Base branch gets origin/main
 merged in. A main that is not checked out anywhere is fast-forwarded as a
@@ -101,14 +95,10 @@ untracked changes where the Base branch is checked out, or a Base branch
 other than main checked out nowhere. So do a diverged main, a conflicting
 merge, a failed fetch or no origin.
 
-In a dry run the Base update lines come from local state only: they show
-the step run takes if the fetch brings new commits to origin/main (run
-skips it if not). Known causes of an exit-3 abort are noted on stderr.
-
 Exit codes:
   0    launched
   1    git or hc failed after work started (leftovers are printed)
-  2    usage error; nothing was created
+  2    usage error, including a TTY or empty stdin; nothing was created
   3    the Base update could not complete cleanly; nothing was created
   4    missing git repo, hc (or a failing hc ls), the chosen Harness or
        \$HC_TERMINAL_ID; nothing was created
@@ -117,19 +107,20 @@ Exit codes:
   130  interrupted
 
 Report issues: $ISSUES_URL
-EOF
+HELP
 }
 
 print_short_help() {
-	cat <<EOF
-Usage: $PROG run [flags] -- "<task>"
-
-Examples:
-  $PROG run --branch feat/login -- "Add OAuth login"
-  $PROG run --base develop --branch fix/parser -- "Fix the v1.2 parser"
-
-See \`$PROG run --help\`.
+	cat <<HELP
+Usage: $PROG start [flags] <<'EOF'
+<task>
 EOF
+
+Example:
+  $PROG start --branch feat/login <<<"Add OAuth login"
+
+See \`$PROG start --help\`.
+HELP
 }
 
 # --- errors ------------------------------------------------------------------
@@ -224,15 +215,6 @@ main_checkout() {
 	fi
 }
 
-# Warns only: never writes .gitignore or .git/info/exclude.
-warn_if_worktrees_not_ignored() {
-	local root="$1"
-	git -C "$root" check-ignore -q .worktrees/ && return 0
-	say "warning: .worktrees/ is not ignored in $root; to ignore it, run one of:"
-	printf "  echo '.worktrees/' >> .gitignore            (shared, committed)\n" >&2
-	printf "  echo '.worktrees/' >> .git/info/exclude     (only you)\n" >&2
-}
-
 # --- leftovers ---------------------------------------------------------------
 
 # Set once work starts; used to report what was left behind on failure.
@@ -280,7 +262,7 @@ base_update_abort() {
 	exit 3
 }
 
-# git merge flags for the Base update, shared by run and the dry run. They
+# git merge flags for the Base update. They
 # override branch.<base>.mergeOptions and merge.* config (such as --no-commit
 # or --squash) that would leave the merge uncommitted.
 BASE_MERGE_FF=(-q --ff-only --no-squash --commit)
@@ -294,12 +276,11 @@ worktree_with_branch() {
 	'
 }
 
-# Decides the Base update step from local state only, shared by run and the
-# dry run so they cannot drift apart. Sets BASE_STEP to one of:
+# Decides the Base update step from local state only. Sets BASE_STEP to one of:
 #   ff-worktree  fast-forward main in BASE_WT, where it is checked out
 #   ff-ref       fast-forward the main ref (checked out nowhere)
 #   merge        merge origin/main into the Base branch in BASE_WT
-#   abort        BASE_ABORT says why; run exits 3
+#   abort        BASE_ABORT says why; start exits 3
 # The abort cases hold even when the Base branch already has origin/main.
 base_update_step() {
 	local base="$1"
@@ -373,31 +354,6 @@ base_update() {
 	fi
 }
 
-# The Base update as shell lines, for --dry-run. Reads only local state:
-# whether origin/main has new commits is unknown without the fetch, so the
-# plan shows the step run would take if it does (if not, run skips it).
-# An abort that is already known is noted on stderr; a diverged main or a
-# conflicting merge is only knowable after the fetch.
-base_update_plan() {
-	local base="$1"
-	base_update_step "$base"
-	[ "$BASE_STEP" != "abort" ] ||
-		say "dry run: $BASE_ABORT; run would abort the Base update (exit 3)"
-	shell_line git fetch -q origin
-	case "$BASE_STEP" in
-	ff-worktree) shell_line git -C "$BASE_WT" merge "${BASE_MERGE_FF[@]}" origin/main ;;
-	ff-ref)
-		# One line, guarded as in run: only a fast-forward moves main, and the
-		# old value is main as it is now.
-		printf '%s && %s\n' \
-			"$(shell_line git merge-base --is-ancestor refs/heads/main refs/remotes/origin/main)" \
-			"$(shell_line git update-ref -m "$PROG: Base update" refs/heads/main \
-				refs/remotes/origin/main "$(git rev-parse refs/heads/main)")"
-		;;
-	merge) shell_line git -C "$BASE_WT" merge "${BASE_MERGE[@]}" origin/main ;;
-	esac
-}
-
 # --- json --------------------------------------------------------------------
 
 # Prints $1 as a quoted JSON string: escapes \ and ", and every control char.
@@ -423,7 +379,7 @@ json_str() {
 	printf '"%s"' "$s"
 }
 
-# --- dry run -----------------------------------------------------------------
+# --- shell quoting -----------------------------------------------------------
 
 # Prints $1 quoted for a POSIX-ish shell (bash, zsh): bare when safe, in
 # single quotes otherwise, and as $'...' when it holds a control char (such as
@@ -456,48 +412,34 @@ shell_line() {
 	printf '\n'
 }
 
-# --- task file -------------------------------------------------------------
+# --- task --------------------------------------------------------------------
 
-# Sets $task from a file, or from stdin for "-", byte-for-byte: the trailing
-# "." sentinel keeps $(...) from dropping trailing newlines.
-read_task_file() {
-	local f="$1"
-	if [ "$f" != "-" ]; then
-		[ -f "$f" ] && [ -r "$f" ] || usage_error "cannot read --task-file: $f"
-	fi
-	task="$(cat -- "$f" && printf .)" || usage_error "cannot read --task-file: $f"
+# Sets $task from stdin, byte-for-byte: the trailing "." sentinel keeps $(...)
+# from dropping trailing newlines. A TTY or a blank task is a usage error.
+read_stdin_task() {
+	[ ! -t 0 ] || usage_error "stdin is a terminal; pass the task on stdin (see the heredoc example)"
+	task="$(cat && printf .)" || usage_error "cannot read the task from stdin"
 	task="${task%.}"
 	case "$task" in
 	*[![:space:]]*) ;;
-	*) usage_error "empty task in --task-file: $f" ;;
+	*) usage_error "empty task on stdin" ;;
 	esac
 }
 
-# --- run ---------------------------------------------------------------------
+# --- start -------------------------------------------------------------------
 
-cmd_run() {
-	local base="main" branch="" task="" have_task=0 update_base=1 arg
+cmd_start() {
+	local base="main" branch="" task="" update_base=1 arg
 	local harness="claude" model="" effort="" have_model=0 have_effort=0
-	local task_file="" have_task_file=0 json=0 dry_run=0
 	local flag value
 
 	while [ "$#" -gt 0 ]; do
 		arg="$1"
 		case "$arg" in
-		--)
-			shift
-			[ "$#" -le 1 ] || usage_error "unexpected argument after the task: $2"
-			if [ "$#" -eq 1 ]; then
-				task="$1"
-				have_task=1
-			fi
-			break
-			;;
+		--) usage_error "unexpected --: the task is read from stdin" ;;
 		--no-base-update) update_base=0 ;;
-		--json) json=1 ;;
-		-n | --dry-run) dry_run=1 ;;
-		--base | --branch | --harness | --model | --effort | --task-file | \
-			--base=* | --branch=* | --harness=* | --model=* | --effort=* | --task-file=*)
+		--base | --branch | --harness | --model | --effort | \
+			--base=* | --branch=* | --harness=* | --model=* | --effort=*)
 			# --flag=value and --flag value both end up as $flag and $value.
 			case "$arg" in
 			*=*)
@@ -517,10 +459,6 @@ cmd_run() {
 			--base) base="$value" ;;
 			--branch) branch="$value" ;;
 			--harness) harness="$value" ;;
-			--task-file)
-				task_file="$value"
-				have_task_file=1
-				;;
 			--model)
 				model="$value"
 				have_model=1
@@ -532,23 +470,18 @@ cmd_run() {
 			esac
 			;;
 		-*) usage_error "unknown flag: $arg" ;;
-		*) usage_error "unexpected argument: $arg (put the task after --)" ;;
+		*) usage_error "unexpected argument: $arg (the task is read from stdin)" ;;
 		esac
 		shift
 	done
 
-	if [ "$have_task_file" -eq 1 ]; then
-		[ "$have_task" -eq 0 ] || usage_error "give the task either after -- or with --task-file, not both"
-		read_task_file "$task_file"
-	fi
-	[ "$have_task" -eq 1 ] || [ "$have_task_file" -eq 1 ] || usage_error "missing task"
-	[ -n "$task" ] || usage_error "missing task"
 	[ -n "$branch" ] || usage_error "missing --branch"
 	[ -n "$base" ] || usage_error "--base needs a value"
 	case "$harness" in
 	claude | codex) ;;
 	*) usage_error "unknown --harness (claude or codex): $harness" ;;
 	esac
+	read_stdin_task
 
 	command -v git >/dev/null 2>&1 || die 4 "git not found on PATH"
 
@@ -579,7 +512,6 @@ cmd_run() {
 	local wt_path="$root/.worktrees/$slug"
 
 	refuse_taken_names "$branch" "$wt_path" "$hc_name"
-	warn_if_worktrees_not_ignored "$root"
 
 	local prompt
 	prompt="$(printf '%s\n\n%s\n%s\n%s' "$task" \
@@ -599,22 +531,6 @@ cmd_run() {
 		[ "$have_effort" -eq 0 ] || cmd+=(--effort "$effort")
 	fi
 
-	if [ "$dry_run" -eq 1 ]; then
-		local plan
-		plan="$(
-			[ "$update_base" -eq 0 ] || base_update_plan "$base"
-			shell_line git worktree add -b "$branch" "$wt_path" "refs/heads/$base"
-			shell_line hc run --bg --name "$hc_name" --cwd "$wt_path" "${cmd[@]}" -- "$prompt"
-		)"
-		if [ "$json" -eq 1 ]; then
-			print_json null "$hc_name" "$branch" "$base" "$wt_path" "$harness" "$have_model" "$model" "$plan"
-		else
-			printf '%s\n' "$plan"
-		fi
-		print_summary "<terminal>" "$hc_name" "$wt_path" "$branch" "$base" "$root" "$harness" 1
-		exit 0
-	fi
-
 	# After the name-conflict checks; Ctrl-C leaves git as git leaves it.
 	if [ "$update_base" -eq 1 ]; then
 		trap on_interrupt INT
@@ -629,7 +545,7 @@ cmd_run() {
 	trap on_interrupt INT
 
 	say "creating worktree $wt_path on new branch $branch from $base"
-	git worktree add -b "$branch" "$wt_path" "refs/heads/$base" >&2 ||
+	git worktree add -q -b "$branch" "$wt_path" "refs/heads/$base" >&2 ||
 		fail_after_start "git worktree add failed"
 
 	say "starting $harness as $hc_name"
@@ -649,109 +565,30 @@ cmd_run() {
 	[ -n "$terminal" ] || fail_after_start "could not read the terminal id from hc run: $hc_output"
 
 	trap - INT
-	if [ "$json" -eq 1 ]; then
-		print_json "$(json_str "$terminal")" "$hc_name" "$branch" "$base" "$wt_path" "$harness" "$have_model" "$model"
-	else
-		printf '%s\n' "$terminal"
-	fi
-	print_summary "$terminal" "$hc_name" "$wt_path" "$branch" "$base" "$root" "$harness" 0
+	print_json "$terminal" "$hc_name" "$branch" "$base" "$wt_path" "$harness" "$have_model" "$model"
+	say "started Herdr subagent $terminal ($hc_name)"
 }
 
-# Prints the --json object. $1 is the terminal as JSON (a string or null);
-# a 9th argument, the dry-run plan (one command per line), adds "commands".
+# Prints the one JSON line on stdout; model is null without --model.
 print_json() {
-	local terminal_json="$1" name="$2" branch="$3" base="$4" wt_path="$5"
-	local harness="$6" have_model="$7" model="$8" model_json="null" commands=""
+	local terminal="$1" name="$2" branch="$3" base="$4" wt_path="$5"
+	local harness="$6" have_model="$7" model="$8" model_json="null"
 	[ "$have_model" -eq 0 ] || model_json="$(json_str "$model")"
-	if [ "$#" -ge 9 ]; then
-		local line sep=""
-		commands=',"commands":['
-		while IFS= read -r line; do
-			commands="$commands$sep$(json_str "$line")"
-			sep=","
-		done <<EOF
-$9
-EOF
-		commands="$commands]"
-	fi
-	printf '{"terminal":%s,"name":%s,"branch":%s,"base":%s,"worktree":%s,"harness":%s,"model":%s%s}\n' \
-		"$terminal_json" "$(json_str "$name")" "$(json_str "$branch")" \
-		"$(json_str "$base")" "$(json_str "$wt_path")" "$(json_str "$harness")" "$model_json" "$commands"
-}
-
-print_summary() {
-	local terminal="$1" name="$2" wt_path="$3" branch="$4" base="$5" root="$6" harness="$7" dry_run="$8"
-	{
-		printf '\n'
-		if [ "$dry_run" -eq 1 ]; then
-			say "dry run: nothing was run; the commands above would start Herdr subagent $name"
-		else
-			say "started Herdr subagent $terminal ($name)"
-		fi
-		printf '  worktree: %s\n' "$wt_path"
-		printf '  branch:   %s (new, from %s)\n' "$branch" "$base"
-		if [ "$dry_run" -eq 1 ]; then
-			# No terminal exists yet, so there is nothing to read, send to or kill.
-			printf '\nNext: run the same command without --dry-run to start it.\n'
-		else
-			printf '\nNext:\n'
-			printf '  hc read %s\n' "$terminal"
-			printf '  hc send %s "<message>"\n' "$terminal"
-			printf '  hc wait %s\n' "$terminal"
-			printf '  hc kill %s\n' "$terminal"
-		fi
-		printf '\n'
-	} >&2
-	if [ "$harness" = "codex" ]; then
-		print_codex_warning "$terminal" "$dry_run" >&2
-	else
-		print_claude_warning "$root" >&2
-	fi
-}
-
-print_codex_warning() {
-	# Printed literally for the reader, not expanded.
-	# shellcheck disable=SC2016
-	printf '%s\n' 'Codex may ask before each `hc send`. To allow it for good, run:'
-	printf '%s\n' '  mkdir -p ~/.codex/rules'
-	printf '%s\n' "  echo 'prefix_rule(pattern=[\"hc\", \"send\"], decision=\"allow\")' >> ~/.codex/rules/default.rules"
-	# A dry run has no terminal to attach to; the real run prints these lines.
-	[ "$2" -eq 0 ] || return 0
-	printf '%s\n' 'If Codex shows a trust dialog, open it with:'
-	printf '  hc attach %s\n' "$1"
-}
-
-print_claude_warning() {
-	local root="$1"
-	# Printed literally for the reader, not expanded.
-	# shellcheck disable=SC2088
-	local user="~/.claude/settings.json"
-	local proj="$root/.claude/settings.json"
-	local local_settings="$root/.claude/settings.local.json"
-	local w=${#user}
-	[ "${#proj}" -le "$w" ] || w=${#proj}
-	[ "${#local_settings}" -le "$w" ] || w=${#local_settings}
-
-	{
-		# shellcheck disable=SC2016 # literal backticks
-		printf '%s\n' 'Claude may ask before each `hc send`. To allow it for good, add "Bash(hc send:*)" to permissions.allow in one of:'
-		printf '  %-*s   (user: every project)\n' "$w" "$user"
-		printf '  %-*s   (project: shared, committed)\n' "$w" "$proj"
-		printf '  %-*s   (project: only you, not committed)\n' "$w" "$local_settings"
-	} >&2
+	printf '{"terminal":%s,"name":%s,"branch":%s,"base":%s,"worktree":%s,"harness":%s,"model":%s}\n' \
+		"$(json_str "$terminal")" "$(json_str "$name")" "$(json_str "$branch")" \
+		"$(json_str "$base")" "$(json_str "$wt_path")" "$(json_str "$harness")" "$model_json"
 }
 
 # --- main --------------------------------------------------------------------
 
 main() {
-	local arg seen_run=0
-	# -h/--help wins over everything before "--".
+	local arg seen_start=0
+	# -h/--help wins over everything.
 	for arg in "$@"; do
 		case "$arg" in
-		--) break ;;
-		run) seen_run=1 ;;
+		start) seen_start=1 ;;
 		-h | --help)
-			if [ "$seen_run" -eq 1 ]; then print_run_help; else print_main_help; fi
+			if [ "$seen_start" -eq 1 ]; then print_start_help; else print_main_help; fi
 			exit 0
 			;;
 		esac
@@ -767,13 +604,13 @@ main() {
 	help)
 		case "$#:${2:-}" in
 		1:) print_main_help ;;
-		2:run) print_run_help ;;
+		2:start) print_start_help ;;
 		*) usage_error "unknown help topic: ${2:-}" ;;
 		esac
 		;;
-	run)
+	start)
 		shift
-		cmd_run "$@"
+		cmd_start "$@"
 		;;
 	-*) usage_error "unknown flag: $1" ;;
 	*) usage_error "unknown subcommand: $1" ;;

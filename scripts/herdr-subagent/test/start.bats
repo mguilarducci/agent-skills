@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# `run` end to end, with hc and claude stubbed on PATH.
+# `start` end to end, with hc and claude stubbed on PATH.
 
 load test_helper
 
@@ -15,8 +15,8 @@ expected_text() {
 		"Write long answers to a file and send its path."
 }
 
-@test "run creates the worktree and launches claude through hc with the exact argv" {
-	run --separate-stderr "$SCRIPT" run --branch feat/login-OAuth -- "Add OAuth login"
+@test "start creates the worktree and launches claude through hc with the exact argv" {
+	run --separate-stderr "$SCRIPT" start --branch feat/login-OAuth <<<"Add OAuth login"
 	[ "$status" -eq 0 ]
 
 	wt="$REPO/.worktrees/feat-login-OAuth"
@@ -32,55 +32,30 @@ expected_text() {
 	[ "$(hc_arg 6)" = "$wt" ]
 	[ "$(hc_arg 7)" = "claude" ]
 	[ "$(hc_arg 8)" = "--" ]
-	[ "$(hc_arg 9)" = "$(expected_text "Add OAuth login" "$wt" feat/login-OAuth)" ]
+	[ "$(hc_arg 9)" = "$(expected_text $'Add OAuth login\n' "$wt" feat/login-OAuth)" ]
 }
 
 @test "the parent id in the report text is the literal HC_TERMINAL_ID" {
 	# shellcheck disable=SC2016 # $HOME must stay literal
-	HC_TERMINAL_ID='vps/t3 $HOME' run --separate-stderr "$SCRIPT" run --branch b -- "task"
+	HC_TERMINAL_ID='vps/t3 $HOME' run --separate-stderr "$SCRIPT" start --branch b <<<"task"
 	[ "$status" -eq 0 ]
 	# shellcheck disable=SC2016
 	[[ "$(hc_arg 9)" == *'hc send vps/t3 $HOME "<result or blocker>"'* ]] || false
 }
 
-@test "stdout is only the terminal id" {
-	run --separate-stderr "$SCRIPT" run --branch b -- "task"
-	[ "$status" -eq 0 ]
-	[ "$output" = "t9z" ]
-}
-
 @test "a bare id from hc run is accepted too" {
-	HC_STUB_OUTPUT="t4k" run --separate-stderr "$SCRIPT" run --branch b -- "task"
+	HC_STUB_OUTPUT="t4k" run --separate-stderr "$SCRIPT" start --branch b <<<"task"
 	[ "$status" -eq 0 ]
-	[ "$output" = "t4k" ]
-}
-
-@test "stderr has the summary, next commands and the Claude warning" {
-	run --separate-stderr "$SCRIPT" run --branch b -- "task"
-	[ "$status" -eq 0 ]
-	[[ "$stderr" == *"$REPO/.worktrees/b"* ]] || false
-	for c in "hc read t9z" "hc send t9z" "hc wait t9z" "hc kill t9z"; do
-		[[ "$stderr" == *"$c"* ]] || false
-	done
-	expected="$(
-		cat <<EOF
-Claude may ask before each \`hc send\`. To allow it for good, add "Bash(hc send:*)" to permissions.allow in one of:
-EOF
-	)"
-	last4="$(printf '%s\n' "$stderr" | tail -n 4)"
-	[ "$(printf '%s\n' "$last4" | head -n 1)" = "$expected" ]
-	[[ "$(printf '%s\n' "$last4" | sed -n 2p)" =~ ^\ \ ~/\.claude/settings\.json\ +\(user:\ every\ project\)$ ]] || false
-	[[ "$(printf '%s\n' "$last4" | sed -n 3p)" =~ ^\ \ $REPO/\.claude/settings\.json\ +\(project:\ shared,\ committed\)$ ]] || false
-	[[ "$(printf '%s\n' "$last4" | sed -n 4p)" =~ ^\ \ $REPO/\.claude/settings\.local\.json\ +\(project:\ only\ you,\ not\ committed\)$ ]] || false
+	[ "$(printf '%s' "$output" | jq -r .terminal)" = "t4k" ]
 }
 
 @test "--flag=value works like --flag value, in any order" {
 	# develop is checked out nowhere, which would abort the Base update.
 	git branch develop
-	run --separate-stderr "$SCRIPT" run --no-base-update --branch=x/one --base=develop -- "task"
+	run --separate-stderr "$SCRIPT" start --no-base-update --branch=x/one --base=develop <<<"task"
 	[ "$status" -eq 0 ]
 	[ -d "$REPO/.worktrees/x-one" ]
-	run --separate-stderr "$SCRIPT" run --no-base-update --base develop --branch x/two -- "task"
+	run --separate-stderr "$SCRIPT" start --no-base-update --base develop --branch x/two <<<"task"
 	[ "$status" -eq 0 ]
 	[ "$(git -C "$REPO/.worktrees/x-two" rev-parse --abbrev-ref HEAD)" = "x/two" ]
 }
@@ -89,7 +64,7 @@ EOF
 	git checkout -q -b develop
 	git commit -q --allow-empty -m dev
 	git checkout -q main
-	run --separate-stderr "$SCRIPT" run --no-base-update --base develop --branch b -- "task"
+	run --separate-stderr "$SCRIPT" start --no-base-update --base develop --branch b <<<"task"
 	[ "$status" -eq 0 ]
 	[ "$(git -C "$REPO/.worktrees/b" rev-parse HEAD)" = "$(git rev-parse develop)" ]
 }
@@ -99,15 +74,15 @@ EOF
 	git commit -q --allow-empty -m dev
 	git tag develop main
 	git checkout -q main
-	run --separate-stderr "$SCRIPT" run --no-base-update --base develop --branch b -- "task"
+	run --separate-stderr "$SCRIPT" start --no-base-update --base develop --branch b <<<"task"
 	[ "$status" -eq 0 ]
 	[ "$(git -C "$REPO/.worktrees/b" rev-parse HEAD)" = "$(git rev-parse refs/heads/develop)" ]
 }
 
-@test "run from a linked worktree still lands under the main checkout" {
+@test "start from a linked worktree still lands under the main checkout" {
 	git worktree add -q -b other "$SANDBOX/elsewhere" main
 	cd "$SANDBOX/elsewhere"
-	run --separate-stderr "$SCRIPT" run --branch nested -- "task"
+	run --separate-stderr "$SCRIPT" start --branch nested <<<"task"
 	[ "$status" -eq 0 ]
 	[ -d "$REPO/.worktrees/nested" ]
 	[ ! -e "$SANDBOX/elsewhere/.worktrees" ]
@@ -117,7 +92,7 @@ EOF
 @test "a repo with a separate git dir gets its worktrees under the main checkout" {
 	git clone -q --separate-git-dir "$SANDBOX/sep.git" "$SANDBOX/origin.git" "$SANDBOX/sep" 2>/dev/null
 	cd "$SANDBOX/sep"
-	run --separate-stderr "$SCRIPT" run --branch b -- "task"
+	run --separate-stderr "$SCRIPT" start --branch b <<<"task"
 	[ "$status" -eq 0 ]
 	[ -d "$SANDBOX/sep/.worktrees/b" ]
 	[ ! -e "$SANDBOX/.worktrees" ]
@@ -126,7 +101,7 @@ EOF
 	# worktree the script refuses rather than guess or nest.
 	git worktree add -q -b other "$SANDBOX/elsewhere" main
 	cd "$SANDBOX/elsewhere"
-	run --separate-stderr "$SCRIPT" run --branch c -- "task"
+	run --separate-stderr "$SCRIPT" start --branch c <<<"task"
 	[ "$status" -eq 4 ]
 	[[ "$stderr" == *"run it from the main checkout"* ]] || false
 	[ ! -e "$SANDBOX/elsewhere/.worktrees" ]
@@ -137,7 +112,7 @@ EOF
 @test "hc names match the branch ticket's table" {
 	check() {
 		rm -f "$HC_LOG"/*
-		run --separate-stderr "$SCRIPT" run --branch "$1" -- "task"
+		run --separate-stderr "$SCRIPT" start --branch "$1" <<<"task"
 		[ "$status" -eq 0 ]
 		[ -d "$REPO/.worktrees/$2" ]
 		[ "$(hc_arg 4)" = "$3" ]
@@ -149,7 +124,7 @@ EOF
 }
 
 @test "a failing hc run exits 1, keeps the worktree and prints cleanup commands" {
-	HC_STUB_EXIT=3 HC_STUB_OUTPUT="" run --separate-stderr "$SCRIPT" run --branch feat/x -- "task"
+	HC_STUB_EXIT=3 HC_STUB_OUTPUT="" run --separate-stderr "$SCRIPT" start --branch feat/x <<<"task"
 	[ "$status" -eq 1 ]
 	[ -z "$output" ]
 	[ -d "$REPO/.worktrees/feat-x" ]
@@ -160,7 +135,7 @@ EOF
 @test "cleanup commands quote a worktree path with spaces, so they work when pasted" {
 	git clone -q "$SANDBOX/origin.git" "$SANDBOX/my repo" 2>/dev/null
 	cd "$SANDBOX/my repo"
-	HC_STUB_EXIT=3 HC_STUB_OUTPUT="" run --separate-stderr "$SCRIPT" run --branch feat/x -- "task"
+	HC_STUB_EXIT=3 HC_STUB_OUTPUT="" run --separate-stderr "$SCRIPT" start --branch feat/x <<<"task"
 	[ "$status" -eq 1 ]
 	[[ "$stderr" == *"git worktree remove '$SANDBOX/my repo/.worktrees/feat-x'"* ]] || false
 	printf '%s\n' "$stderr" | sed -n 's/^  \(git .*\)$/\1/p' >"$SANDBOX/cleanup"
@@ -172,7 +147,7 @@ EOF
 }
 
 @test "hc output without a terminal id exits 1 with cleanup commands" {
-	HC_STUB_OUTPUT="something odd happened" run --separate-stderr "$SCRIPT" run --branch b -- "task"
+	HC_STUB_OUTPUT="something odd happened" run --separate-stderr "$SCRIPT" start --branch b <<<"task"
 	[ "$status" -eq 1 ]
 	[ -z "$output" ]
 	[[ "$stderr" == *"git worktree remove"* ]] || false
@@ -188,7 +163,7 @@ fi
 exec /usr/bin/git "$@"
 STUB
 	chmod +x "$STUBS/git"
-	run --separate-stderr "$SCRIPT" run --branch b -- "task"
+	run --separate-stderr "$SCRIPT" start --branch b <<<"task"
 	[ "$status" -eq 1 ]
 	[ ! -e "$HC_LOG/argc" ]
 	[[ "$stderr" != *"git branch -d"* ]] || false
@@ -207,15 +182,15 @@ kill -INT "$PPID"
 sleep 1
 echo '{"address":"t1"}'
 STUB
-	run --separate-stderr "$SCRIPT" run --branch b -- "task"
+	run --separate-stderr "$SCRIPT" start --branch b <<<"task"
 	[ "$status" -eq 130 ]
 	[ -z "$output" ]
 	[[ "$stderr" == *"git worktree remove $REPO/.worktrees/b"* ]] || false
 }
 
 @test "runs under macOS stock /bin/bash" {
-	run --separate-stderr /bin/bash "$SCRIPT" run --branch feat/login-OAuth -- "task"
+	run --separate-stderr /bin/bash "$SCRIPT" start --branch feat/login-OAuth <<<"task"
 	[ "$status" -eq 0 ]
-	[ "$output" = "t9z" ]
+	[ "$(printf '%s' "$output" | jq -r .terminal)" = "t9z" ]
 	[ "$(hc_arg 4)" = "feat-login-oauth" ]
 }

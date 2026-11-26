@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# The Base update: `run` brings the Base branch up to date with origin/main
+# The Base update: `start` brings the Base branch up to date with origin/main
 # before it creates the worktree. Real git, local bare origin.
 
 load test_helper
@@ -41,7 +41,7 @@ git_state() {
 assert_aborts() {
 	local before
 	before="$(git_state)"
-	run --separate-stderr "$SCRIPT" run "$@"
+	run --separate-stderr "$SCRIPT" start "$@" <<<"task"
 	[ "$status" -eq 3 ]
 	[ -z "$output" ]
 	[[ "$stderr" == *"--no-base-update"* ]] || false
@@ -52,7 +52,7 @@ assert_aborts() {
 
 @test "main behind origin/main is fast-forwarded before the worktree is created" {
 	up="$(advance_origin)"
-	run --separate-stderr "$SCRIPT" run --branch b -- "task"
+	run --separate-stderr "$SCRIPT" start --branch b <<<"task"
 	[ "$status" -eq 0 ]
 	[ "$(git rev-parse main)" = "$up" ]
 	[ "$(git -C "$REPO/.worktrees/b" rev-parse HEAD)" = "$up" ]
@@ -63,7 +63,7 @@ assert_aborts() {
 	git checkout -q -b parking
 	git worktree add -q "$SANDBOX/main-wt" main
 	up="$(advance_origin)"
-	run --separate-stderr "$SCRIPT" run --branch b -- "task"
+	run --separate-stderr "$SCRIPT" start --branch b <<<"task"
 	[ "$status" -eq 0 ]
 	[ "$(git rev-parse main)" = "$up" ]
 	[ -f "$SANDBOX/main-wt/upstream.txt" ]
@@ -74,7 +74,7 @@ assert_aborts() {
 @test "main not checked out anywhere is fast-forwarded as a ref" {
 	git checkout -q -b parking
 	up="$(advance_origin)"
-	run --separate-stderr "$SCRIPT" run --branch b -- "task"
+	run --separate-stderr "$SCRIPT" start --branch b <<<"task"
 	[ "$status" -eq 0 ]
 	[ "$(git rev-parse main)" = "$up" ]
 	[ "$(git rev-parse parking)" != "$up" ]
@@ -88,7 +88,7 @@ assert_aborts() {
 	git commit -q -m dev
 	dev="$(git rev-parse HEAD)"
 	up="$(advance_origin)"
-	run --separate-stderr "$SCRIPT" run --base develop --branch b -- "task"
+	run --separate-stderr "$SCRIPT" start --base develop --branch b <<<"task"
 	[ "$status" -eq 0 ]
 	merged="$(git rev-parse develop)"
 	[ "$(git rev-parse "$merged^1")" = "$dev" ]
@@ -104,7 +104,7 @@ assert_aborts() {
 	git commit -q --allow-empty -m dev
 	git config branch.develop.mergeOptions "--no-commit --squash"
 	up="$(advance_origin)"
-	run --separate-stderr "$SCRIPT" run --base develop --branch b -- "task"
+	run --separate-stderr "$SCRIPT" start --base develop --branch b <<<"task"
 	[ "$status" -eq 0 ]
 	[ "$(git rev-parse develop^2)" = "$up" ]
 	[ "$(git -C "$REPO/.worktrees/b" rev-parse HEAD)" = "$(git rev-parse develop)" ]
@@ -116,7 +116,7 @@ assert_aborts() {
 @test "branch mergeOptions that keep a fast-forward from committing do not stop the Base update" {
 	git config branch.main.mergeOptions "--squash --no-commit"
 	up="$(advance_origin)"
-	run --separate-stderr "$SCRIPT" run --branch b -- "task"
+	run --separate-stderr "$SCRIPT" start --branch b <<<"task"
 	[ "$status" -eq 0 ]
 	[ "$(git rev-parse main)" = "$up" ]
 	[ "$(git -C "$REPO/.worktrees/b" rev-parse HEAD)" = "$up" ]
@@ -133,16 +133,16 @@ STUB
 	chmod +x "$STUBS/git"
 	git checkout -q -b develop
 	advance_origin >/dev/null
-	assert_aborts --base develop --branch b -- "task"
+	assert_aborts --base develop --branch b
 	[[ "$stderr" == *"does not contain origin/main"* ]] || false
 	git checkout -q main
-	assert_aborts --branch b -- "task"
+	assert_aborts --branch b
 }
 
 @test "--no-base-update does no fetch and no merge" {
 	git remote set-url origin "$SANDBOX/missing.git"
 	before="$(git rev-parse main)"
-	run --separate-stderr "$SCRIPT" run --no-base-update --branch b -- "task"
+	run --separate-stderr "$SCRIPT" start --no-base-update --branch b <<<"task"
 	[ "$status" -eq 0 ]
 	[ "$(git rev-parse main)" = "$before" ]
 	[[ "$stderr" != *"Base update"* ]] || false
@@ -152,7 +152,7 @@ STUB
 @test "--no-base-update leaves a stale main stale" {
 	advance_origin >/dev/null
 	before="$(git rev-parse main)"
-	run --separate-stderr "$SCRIPT" run --branch b --no-base-update -- "task"
+	run --separate-stderr "$SCRIPT" start --branch b --no-base-update <<<"task"
 	[ "$status" -eq 0 ]
 	[ "$(git rev-parse main)" = "$before" ]
 	[ "$(git rev-parse origin/main)" = "$before" ]
@@ -165,7 +165,7 @@ STUB
 	git push -q origin main
 	advance_origin >/dev/null
 	printf 'dirty\n' >tracked.txt
-	assert_aborts --branch b -- "task"
+	assert_aborts --branch b
 	[[ "$stderr" == *"uncommitted or untracked"* ]] || false
 }
 
@@ -173,19 +173,19 @@ STUB
 	advance_origin >/dev/null
 	printf 'staged\n' >staged.txt
 	git add staged.txt
-	assert_aborts --branch b -- "task"
+	assert_aborts --branch b
 }
 
 @test "untracked files in the Base's worktree abort with exit 3" {
 	advance_origin >/dev/null
 	printf 'new\n' >untracked.txt
-	assert_aborts --branch b -- "task"
+	assert_aborts --branch b
 }
 
 @test "main diverged from origin/main aborts with exit 3" {
 	advance_origin >/dev/null
 	git commit -q --allow-empty -m local
-	assert_aborts --branch b -- "task"
+	assert_aborts --branch b
 	[[ "$stderr" == *"diverged"* ]] || false
 }
 
@@ -193,7 +193,7 @@ STUB
 	advance_origin >/dev/null
 	git commit -q --allow-empty -m local
 	git checkout -q -b parking
-	assert_aborts --branch b -- "task"
+	assert_aborts --branch b
 }
 
 @test "a conflicting merge of origin/main into the Base aborts with exit 3" {
@@ -202,53 +202,53 @@ STUB
 	git add same.txt
 	git commit -q -m dev
 	advance_origin same.txt upstream >/dev/null
-	assert_aborts --base develop --branch b -- "task"
+	assert_aborts --base develop --branch b
 	[[ "$stderr" == *"conflict"* ]] || false
 	[ ! -e "$REPO/.git/MERGE_HEAD" ]
 }
 
 @test "a failing fetch aborts with exit 3" {
 	git remote set-url origin "$SANDBOX/missing.git"
-	assert_aborts --branch b -- "task"
+	assert_aborts --branch b
 	[[ "$stderr" == *"fetch"* ]] || false
 }
 
 @test "no origin aborts with exit 3" {
 	git remote remove origin
-	assert_aborts --branch b -- "task"
+	assert_aborts --branch b
 	[[ "$stderr" == *"no origin"* ]] || false
 }
 
 @test "a non-main Base not checked out anywhere aborts with exit 3" {
 	git branch develop
 	advance_origin >/dev/null
-	assert_aborts --base develop --branch b -- "task"
+	assert_aborts --base develop --branch b
 	[[ "$stderr" == *"not checked out"* ]] || false
 }
 
 @test "earlier Herdr subagent worktrees under an unignored .worktrees/ do not count as dirty" {
-	run --separate-stderr "$SCRIPT" run --branch first -- "task"
+	run --separate-stderr "$SCRIPT" start --branch first <<<"task"
 	[ "$status" -eq 0 ]
 	up="$(advance_origin)"
-	run --separate-stderr "$SCRIPT" run --branch second -- "task"
+	run --separate-stderr "$SCRIPT" start --branch second <<<"task"
 	[ "$status" -eq 0 ]
 	[ "$(git -C "$REPO/.worktrees/second" rev-parse HEAD)" = "$up" ]
 }
 
 @test "changes in the Base branch's worktree abort with exit 3 even when it already has origin/main" {
 	printf 'new\n' >untracked.txt
-	assert_aborts --branch b -- "task"
+	assert_aborts --branch b
 	[[ "$stderr" == *"uncommitted or untracked"* ]] || false
 }
 
 @test "a non-main Base branch not checked out anywhere aborts with exit 3 even when no merge is needed" {
 	git branch develop
-	assert_aborts --base develop --branch b -- "task"
+	assert_aborts --base develop --branch b
 	[[ "$stderr" == *"not checked out"* ]] || false
 }
 
-@test "help run documents --no-base-update and exit 3" {
-	run --separate-stderr "$SCRIPT" help run
+@test "help start documents --no-base-update and exit 3" {
+	run --separate-stderr "$SCRIPT" help start
 	[ "$status" -eq 0 ]
 	[[ "$output" == *"--no-base-update"* ]] || false
 	[[ "$output" == *"  3    the Base update"* ]] || false
@@ -264,7 +264,7 @@ fi
 exec /usr/bin/git "$@"
 STUB
 	chmod +x "$STUBS/git"
-	run --separate-stderr "$SCRIPT" run --branch b -- "task"
+	run --separate-stderr "$SCRIPT" start --branch b <<<"task"
 	[ "$status" -eq 130 ]
 	[ -z "$output" ]
 	[ ! -e "$REPO/.worktrees" ]
@@ -280,7 +280,7 @@ STUB
 	chmod +x "$STUBS/git"
 	git branch feat/x
 	advance_origin >/dev/null
-	run --separate-stderr "$SCRIPT" run --branch feat/x -- "task"
+	run --separate-stderr "$SCRIPT" start --branch feat/x <<<"task"
 	[ "$status" -eq 5 ]
 	[ ! -e "$HC_LOG/git-fetch" ]
 	[ ! -e "$REPO/.worktrees" ]
