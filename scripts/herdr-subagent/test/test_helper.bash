@@ -19,6 +19,9 @@ setup_sandbox() {
 	# counted in $HC_LOG/ls-calls, so it never clobbers the `hc run` argv.
 	# `hc templates` is answered from $HC_STUB_TEMPLATES (default: implementer
 	# and implementer-codex) and only counted in $HC_LOG/templates-calls.
+	# `hc get <t>` is answered from $HC_STUB_GET (default: a live terminal
+	# whose address is <t>), exits $HC_STUB_GET_EXIT, and is only logged in
+	# $HC_LOG/get-calls.
 	cat >"$STUBS/hc" <<'STUB'
 #!/bin/bash
 if [ "${1:-}" = "templates" ]; then
@@ -29,6 +32,15 @@ if [ "${1:-}" = "templates" ]; then
 		printf '%s\n' '{"templates":[{"name":"implementer","description":"d","command":"claude","error":null},{"name":"implementer-codex","description":"d","command":"codex --no-daemon","error":null}]}'
 	fi
 	exit "${HC_STUB_TEMPLATES_EXIT:-0}"
+fi
+if [ "${1:-}" = "get" ]; then
+	printf '%s\n' "$*" >>"$HC_LOG/get-calls"
+	if [ -n "${HC_STUB_GET+x}" ]; then
+		printf '%s\n' "$HC_STUB_GET"
+	else
+		printf '{"address":"%s","state":"live","parent":null}\n' "${2:-}"
+	fi
+	exit "${HC_STUB_GET_EXIT:-0}"
 fi
 if [ "${1:-}" = "ls" ]; then
 	printf '%s\n' "$*" >>"$HC_LOG/ls-calls"
@@ -78,6 +90,35 @@ hc_argv() {
 		printf '%s\n' "$(cat "$HC_LOG/arg.$i")"
 		i=$((i + 1))
 	done
+}
+
+# The values hc run got for flag $1 (such as --label), one per line, from
+# the flags before `--`.
+hc_flag_values() {
+	local i=1 argc a
+	argc="$(cat "$HC_LOG/argc")"
+	while [ "$i" -lt "$argc" ]; do
+		a="$(cat "$HC_LOG/arg.$i")"
+		[ "$a" != "--" ] || return 0
+		if [ "$a" = "$1" ]; then
+			printf '%s\n' "$(cat "$HC_LOG/arg.$((i + 1))")"
+		fi
+		i=$((i + 1))
+	done
+}
+
+# The template hc run got: the argv element right after `--`.
+hc_template() {
+	local i=1 argc
+	argc="$(cat "$HC_LOG/argc")"
+	while [ "$i" -lt "$argc" ]; do
+		if [ "$(cat "$HC_LOG/arg.$i")" = "--" ]; then
+			cat "$HC_LOG/arg.$((i + 1))"
+			return 0
+		fi
+		i=$((i + 1))
+	done
+	return 1
 }
 
 # The n-th argv element the hc stub received (1-based).

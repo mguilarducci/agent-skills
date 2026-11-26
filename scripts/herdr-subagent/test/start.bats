@@ -15,16 +15,9 @@ setup() {
 	[ "$(git -C "$wt" rev-parse --abbrev-ref HEAD)" = "feat/login-OAuth" ]
 	[ "$(git -C "$wt" rev-parse HEAD)" = "$(git rev-parse main)" ]
 
-	[ "$(cat "$HC_LOG/argc")" -eq 9 ]
-	[ "$(hc_arg 1)" = "run" ]
-	[ "$(hc_arg 2)" = "--bg" ]
-	[ "$(hc_arg 3)" = "--name" ]
-	[ "$(hc_arg 4)" = "feat-login-oauth" ]
-	[ "$(hc_arg 5)" = "--cwd" ]
-	[ "$(hc_arg 6)" = "$wt" ]
-	[ "$(hc_arg 7)" = "--" ]
-	[ "$(hc_arg 8)" = "implementer" ]
-	[ "$(hc_arg 9)" = "Add OAuth login" ]
+	[ "$(hc_argv)" = "$(printf '%s\n' run --bg --name feat-login-oauth --cwd "$wt" \
+		--parent tparent --label "subagent.repo=$REPO" --label subagent.branch=feat/login-OAuth \
+		--label subagent.base=main -- implementer 'Add OAuth login')" ]
 }
 
 @test "a bare id from hc run is accepted too, though without a first_message" {
@@ -144,6 +137,10 @@ if [ "$1" = ls ]; then
 fi
 if [ "$1" = templates ]; then
 	echo '{"templates":[{"name":"implementer","description":"d","command":"claude"}]}'
+	exit 0
+fi
+if [ "$1" = get ]; then
+	echo '{"address":"tparent","state":"live"}'
 	exit 0
 fi
 kill -INT "$PPID"

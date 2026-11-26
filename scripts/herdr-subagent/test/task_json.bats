@@ -63,8 +63,8 @@ EOF
 	run --separate-stderr "$SCRIPT" start --branch b <<<"task"
 	[ "$status" -eq 0 ]
 	[ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" = "1" ]
-	[ "$(printf '%s' "$output" | jq -c .)" = "$(jq -nc --arg wt "$WT" \
-		'{terminal:"t9z",name:"b",branch:"b",base:"main",worktree:$wt,template:"implementer",task_sent:true,reason:null}')" ]
+	[ "$(printf '%s' "$output" | jq -c .)" = "$(jq -nc --arg wt "$WT" --arg repo "$REPO" \
+		'{terminal:"t9z",name:"b",branch:"b",base:"main",worktree:$wt,template:"implementer",issue:null,labels:{"subagent.repo":$repo,"subagent.branch":"b","subagent.base":"main"},task_sent:true,reason:null}')" ]
 }
 
 @test "stderr has progress and one started line, and no summary or hints" {
@@ -91,6 +91,6 @@ EOF
 	run --separate-stderr "$SCRIPT" start --template "$tpl" \
 		--base 'we"ird' --branch b <<<"task"
 	[ "$status" -eq 0 ]
-	[ "$(printf '%s' "$output" | jq -c .)" = "$(jq -nc --arg wt "$odd/.worktrees/b" --arg t "$tpl" \
-		'{terminal:"t9z",name:"b",branch:"b",base:"we\"ird",worktree:$wt,template:$t,task_sent:true,reason:null}')" ]
+	[ "$(printf '%s' "$output" | jq -c .)" = "$(jq -nc --arg wt "$odd/.worktrees/b" --arg t "$tpl" --arg repo "$odd" \
+		'{terminal:"t9z",name:"b",branch:"b",base:"we\"ird",worktree:$wt,template:$t,issue:null,labels:{"subagent.repo":$repo,"subagent.branch":"b","subagent.base":"we\"ird"},task_sent:true,reason:null}')" ]
 }

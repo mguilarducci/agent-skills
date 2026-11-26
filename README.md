@@ -51,6 +51,14 @@ hc wait "$t"
 
   `implementer` runs Claude Code and `implementer-codex` runs Codex. A
   missing template exits 4 and creates nothing.
+- `--parent <t>`: the live hc terminal that gets the reports (default
+  `$HC_TERMINAL_ID`). Run it from an hc terminal, under `hc run --bg`, or pass
+  `--parent`; without a live parent, `start` exits 4 and creates nothing.
+- Labels: every Herdr subagent gets `subagent.repo` (the main checkout root),
+  `subagent.branch` and `subagent.base`. `--issue <n>` (digits only) adds
+  `subagent.issue`, and repeatable `--label k=v` adds your own. Keys under
+  `subagent.`, `herdr.` or `where` are reserved (exit 2). Find them with
+  `hc ls --label subagent.repo=<root>`.
 - The task is read only from stdin, byte-for-byte, trailing newlines
   included. Use a quoted heredoc so quotes, `$` and backticks survive:
 
@@ -62,8 +70,9 @@ hc wait "$t"
 
   An empty or whitespace-only task, or stdin attached to a terminal, exits 2.
 - stdout is always one JSON line,
-  `{"terminal","name","branch","base","worktree","template","task_sent","reason"}`,
-  where `reason` is hc's reason when `task_sent` is false and `null`
+  `{"terminal","name","branch","base","worktree","template","issue","labels","task_sent","reason"}`,
+  where `issue` is a number or `null`, `labels` holds every label applied,
+  and `reason` is hc's reason when `task_sent` is false and `null`
   otherwise. stderr carries only
   progress, errors, leftovers after a failure and one final `started` line.
 - An existing branch, worktree path or live hc name is never reused: `start`
@@ -77,7 +86,7 @@ hc wait "$t"
 - `2`: usage error, including a TTY or empty stdin.
 - `3`: no `origin`, a failed fetch, or the base missing on `origin`.
 - `4`: missing git repo, `hc` (or a failing `hc ls` or `hc templates`), the
-  template or `$HC_TERMINAL_ID`.
+  template, or a live parent.
 - `5`: the branch, worktree path or hc name already exists. Pick another name
   and retry.
 - `6`: started, but hc didn't deliver the task (`task_sent: false`, for
