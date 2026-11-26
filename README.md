@@ -96,3 +96,11 @@ hc wait "$t"
 After exits 2 to 5, nothing was created.
 
 See `herdr-subagent help run` for every flag.
+
+## herdr-implement-spec
+
+A skill that implements a spec and its tickets, launching each implementer as a
+Herdr subagent. It is adapted from the `implement-spec` skill in
+[mattpocock/skills](https://github.com/mattpocock/skills), MIT licensed,
+Copyright (c) 2026 Matt Pocock; its license is kept in
+`skills/herdr-implement-spec/LICENSE`.
