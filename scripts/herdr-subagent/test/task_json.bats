@@ -54,8 +54,13 @@ EOF
 }
 
 @test "stdin attached to a TTY exits 2 and creates nothing" {
-	# script(1) gives the command a pseudo-terminal as stdin.
-	run script -q /dev/null "$SCRIPT" start --branch b </dev/null
+	# script(1) gives the command a pseudo-terminal as stdin. BSD/macOS
+	# script takes the command as arguments; util-linux needs -c and -e.
+	if [ "$(uname -s)" = "Darwin" ]; then
+		run script -q /dev/null "$SCRIPT" start --branch b </dev/null
+	else
+		run script -q -e -c "$(printf '%q ' "$SCRIPT" start --branch b)" /dev/null </dev/null
+	fi
 	[ "$status" -eq 2 ]
 	[[ "$output" == *"stdin is a terminal"* ]] || false
 	assert_nothing_created
