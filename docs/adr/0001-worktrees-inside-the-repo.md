@@ -5,5 +5,5 @@
 ## Consequences
 
 - Worktrees made by the script and by the app's dialog end up in different folders.
-- The script never edits `.gitignore` or `.git/info/exclude`; when `.worktrees/` isn't ignored it only warns, so each repo opts in by ignoring it.
+- The script never edits or checks `.gitignore` or `.git/info/exclude`; `--help` tells the caller to ignore `.worktrees/` if it shows up in `git status`, so each repo opts in by ignoring it.
 - Linked worktrees always go under the **main** checkout, never nested inside another worktree.
