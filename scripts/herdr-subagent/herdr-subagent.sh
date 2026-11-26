@@ -271,10 +271,9 @@ refuse_dead_parent() {
 
 # --- labels ------------------------------------------------------------------
 
-# Set by add_label: the hc run flags, the JSON object body, the keys seen.
+# Set by add_label: the hc run flags and the JSON object body.
 LABEL_ARGS=()
 LABELS_JSON=""
-LABEL_KEYS=" "
 
 add_label() {
 	local key="$1" value="$2"
@@ -282,7 +281,6 @@ add_label() {
 	LABEL_ARGS[${#LABEL_ARGS[@]}]="$key=$value"
 	[ -z "$LABELS_JSON" ] || LABELS_JSON="$LABELS_JSON,"
 	LABELS_JSON="$LABELS_JSON$(json_str "$key"):$(json_str "$value")"
-	LABEL_KEYS="$LABEL_KEYS$key "
 }
 
 # Exits 2 unless $1 is k=v with a free key: ASCII letters, digits and . _ -
@@ -383,25 +381,25 @@ main_checkout() {
 
 # --- leftovers ---------------------------------------------------------------
 
-# Set once work starts; used to report what was left behind on failure.
+# Set once the name checks pass, so neither existed before this run; used to
+# report what was left behind on failure.
 WT_PATH=""
 BRANCH=""
-BRANCH_EXISTED=1
-PATH_EXISTED=1
 
 print_leftovers() {
 	local left=0
-	if [ "$PATH_EXISTED" -eq 0 ] && [ -n "$WT_PATH" ] && [ -e "$WT_PATH" ]; then
+	if [ -n "$WT_PATH" ] && [ -e "$WT_PATH" ]; then
 		say "worktree left at $WT_PATH"
 		printf '  ' >&2
 		shell_line git worktree remove "$WT_PATH" >&2
 		left=1
 	fi
-	if [ "$BRANCH_EXISTED" -eq 0 ] && [ -n "$BRANCH" ] &&
-		git show-ref --verify --quiet "refs/heads/$BRANCH" 2>/dev/null; then
+	# close deletes the branch once merged; git branch -d can refuse when the
+	# main checkout is behind origin/<base>.
+	if [ -n "$BRANCH" ] && git show-ref --verify --quiet "refs/heads/$BRANCH" 2>/dev/null; then
 		[ "$left" -eq 1 ] || say "branch left behind: $BRANCH"
 		printf '  ' >&2
-		shell_line git branch -d "$BRANCH" >&2
+		shell_line "$PROG" close "$BRANCH" >&2
 	fi
 }
 
@@ -751,16 +749,12 @@ cmd_start() {
 		add_label "${label%%=*}" "${label#*=}"
 	done
 
-	# After the name-conflict checks; Ctrl-C leaves git as git leaves it.
-	trap on_interrupt INT
-	fetch_origin_base "$base"
-
-	# Work starts here: from now on, failures may leave things behind.
+	# After the name-conflict checks, so neither the branch nor the path
+	# existed; Ctrl-C leaves git as git leaves it.
 	WT_PATH="$wt_path"
 	BRANCH="$branch"
-	if git show-ref --verify --quiet "refs/heads/$branch"; then BRANCH_EXISTED=1; else BRANCH_EXISTED=0; fi
-	if [ -e "$wt_path" ]; then PATH_EXISTED=1; else PATH_EXISTED=0; fi
 	trap on_interrupt INT
+	fetch_origin_base "$base"
 
 	say "creating worktree $wt_path on new branch $branch from origin/$base"
 	git worktree add -q --no-track -b "$branch" "$wt_path" "refs/remotes/origin/$base" >&2 ||
