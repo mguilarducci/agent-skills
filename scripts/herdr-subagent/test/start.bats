@@ -17,7 +17,7 @@ setup() {
 
 	[ "$(hc_argv)" = "$(printf '%s\n' run --bg --name feat-login-oauth --cwd "$wt" \
 		--parent tparent --label "subagent.repo=$REPO" --label subagent.branch=feat/login-OAuth \
-		--label subagent.base=main -- implementer 'Add OAuth login')" ]
+		--label subagent.base=main -- implementer-claude "$(implementer_text 'Add OAuth login')")" ]
 }
 
 @test "a bare id from hc run is accepted too, though without a first_message" {
@@ -140,7 +140,7 @@ if [ "$1" = ls ]; then
 	exit 0
 fi
 if [ "$1" = templates ]; then
-	echo '{"templates":[{"name":"implementer","description":"d","command":"claude"}]}'
+	echo '{"templates":[{"name":"implementer-claude","description":"d","command":"claude"}]}'
 	exit 0
 fi
 if [ "$1" = get ]; then

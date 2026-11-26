@@ -46,7 +46,8 @@ start flags:
                     ASCII letters, digits and . _ / - only.
   --base <branch>   Base branch: a branch on origin to start from
                     (default: main).
-  --template <name> hc template to launch from (default: implementer).
+  --template <name> hc template to launch from
+                    (default: implementer-claude).
   --parent <t>      Live hc terminal that gets the reports
                     (default: \$HC_TERMINAL_ID).
   --issue <n>       Issue number (digits only), as label subagent.issue.
@@ -72,14 +73,17 @@ from origin/<base>; no local branch is ever written. The worktree goes to
 <main-checkout-root>/.worktrees/<slug(branch)>, even when you run it from
 another worktree. The hc name is derived from the branch.
 
-Templates: the Herdr subagent is started from an hc template and the task.
-The template sets the Harness, model, effort, permissions and the child's
-fixed rules; hc adds the report-back target, so the script sends only the
-task. It must be listed by \`hc templates\`: a Markdown file in
+Templates: the Herdr subagent is started from an hc template and a text.
+The template, named <role>-<harness>, sets the Harness, model, effort and
+permissions. The text is the role's fixed rules (rules/<role>.md next to
+this script; the role is the template name up to its last "-"), a blank
+line, a "Task:" heading and your task; a role with no rules file gets the
+task alone. hc adds the report-back target. The template must be listed
+by \`hc templates\`: a Markdown file in
 ~/.config/herdr-core/templates/<name>.md. This repo ships
-scripts/herdr-subagent/templates/implementer.md and implementer-codex.md;
-copy or link them there:
-  implementer        Claude Code, with \`hc send\` and \`hc label\` pre-allowed.
+scripts/herdr-subagent/templates/implementer-claude.md and
+implementer-codex.md; copy or link them there:
+  implementer-claude Claude Code, with \`hc send\` and \`hc label\` pre-allowed.
   implementer-codex  Codex in its workspace-write sandbox with network
                      access on: hc cannot reach its core from inside that
                      sandbox otherwise, and the child needs \`hc send\` and
@@ -152,7 +156,7 @@ After start exits 2 to 5, nothing was created.
 Tips for agents:
   - Pass the task with a quoted heredoc (<<'EOF') and put everything this
     launch needs in it: the issue, the files, how to verify, where to open
-    the PR. The template already holds the fixed rules.
+    the PR. The role's fixed rules are sent ahead of it.
   - Wait with \`hc wait --children any\` instead of polling or sleeping; it
     returns on a child's next report, block, error or exit.
   - Treat a report as claims: check the worktree (git log, git diff, the
@@ -333,7 +337,7 @@ refuse_missing_template() {
 	done <<EOF
 $(json_raw "$listed" '"templates"[]."name"')
 EOF
-	shipped="$(cd "$(dirname "$0")" && pwd -P)/templates"
+	shipped="$(script_dir)/templates"
 	say "template not found: $name (hc templates does not list it); nothing was created"
 	say "templates go in ~/.config/herdr-core/templates/$name.md; copy or link one from $shipped"
 	exit 4
@@ -654,11 +658,38 @@ read_stdin_task() {
 	esac
 }
 
+# The directory this script really lives in, following symlinks (bash 3.2
+# and macOS have no `readlink -f`).
+script_dir() {
+	local src="$0" dir
+	while [ -L "$src" ]; do
+		dir="$(cd "$(dirname "$src")" && pwd -P)"
+		src="$(readlink "$src")"
+		case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+	done
+	cd "$(dirname "$src")" && pwd -P
+}
+
+# Prints the text hc run sends for template $1 and task $2: the role's rules
+# (rules/<role>.md next to the script, where the role is the template name up
+# to its last "-"), a blank line, a "Task:" heading and the task. A role
+# without a rules file gets the task alone.
+task_text() {
+	local role="${1%-*}" rules
+	rules="$(script_dir)/rules/$role.md"
+	case "$role" in */* | .*) rules="" ;; esac
+	if [ -n "$rules" ] && [ -f "$rules" ]; then
+		printf '%s\n\nTask:\n%s' "$(cat "$rules")" "$2"
+	else
+		printf '%s' "$2"
+	fi
+}
+
 # --- start -------------------------------------------------------------------
 
 cmd_start() {
 	local base="main" branch="" task="" arg
-	local template="implementer" parent="${HC_TERMINAL_ID:-}" issue=""
+	local template="implementer-claude" parent="${HC_TERMINAL_ID:-}" issue=""
 	local flag value user_labels=() label key seen=" "
 
 	while [ "$#" -gt 0 ]; do
@@ -768,11 +799,13 @@ cmd_start() {
 	git worktree add -q --no-track -b "$branch" "$wt_path" "refs/remotes/origin/$base" >&2 ||
 		fail_after_start "git worktree add failed"
 
-	# hc joins the template body and the task into the first message and adds
-	# the report-back target; the script sends only the task.
+	# The template holds only the setup; the role's rules travel with the
+	# task, and hc adds the report-back target.
 	say "starting template $template as $hc_name"
-	local hc_output
-	hc_output="$(hc run --bg --name "$hc_name" --cwd "$wt_path" --parent "$parent" "${LABEL_ARGS[@]}" -- "$template" "$task")" ||
+	local hc_output text
+	text="$(task_text "$template" "$task" && printf .)"
+	text="${text%.}"
+	hc_output="$(hc run --bg --name "$hc_name" --cwd "$wt_path" --parent "$parent" "${LABEL_ARGS[@]}" -- "$template" "$text")" ||
 		fail_after_start "hc run failed"
 
 	# Piped, hc prints JSON; take its "address". Fall back to a bare id.

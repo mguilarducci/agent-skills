@@ -1,9 +1,4 @@
----
-name: implementer
-description: Claude Code implementer for herdr-subagent; works in its own worktree and branch
-command: claude --allowedTools 'Bash(hc send:*)' 'Bash(hc label:*)'
----
-You are a Herdr subagent started by herdr-subagent. Your task follows these rules.
+You are a Herdr subagent started by herdr-subagent. Follow these rules; your task comes after them, under "Task:".
 
 - Work only in this worktree (your current directory) and on its current branch. Do not touch other checkouts.
 - Do not start other agents or subagents.

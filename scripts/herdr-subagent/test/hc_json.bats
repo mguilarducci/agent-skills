@@ -22,7 +22,7 @@ setup() {
 }
 
 @test "a nested name in hc templates is not a listed template" {
-	HC_STUB_TEMPLATES='{"templates":[{"name":"other","vars":{"name":"implementer"}}]}' \
+	HC_STUB_TEMPLATES='{"templates":[{"name":"other","vars":{"name":"implementer-claude"}}]}' \
 		run --separate-stderr "$SCRIPT" start --branch b <<<"task"
 	[ "$status" -eq 4 ]
 	assert_nothing_created

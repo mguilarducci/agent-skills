@@ -43,17 +43,22 @@ herdr-subagent close feat/login   # once the PR is merged
   `origin/<base>`; no local branch is ever written. No `origin`, a failed
   fetch, or a base missing on `origin` exits 3 and creates nothing.
 - `--template <name>`: the hc template to launch from (default
-  `implementer`). The template sets the Harness, model, effort, permissions
-  and the child's fixed rules, and hc adds the report-back target, so only
-  your task is sent. It must be listed by `hc templates`, which means a file
-  at `~/.config/herdr-core/templates/<name>.md`. Copy or link the shipped ones:
+  `implementer-claude`). Templates are named `<role>-<harness>` and hold only
+  frontmatter: the Harness, model, effort and permissions. The role's fixed
+  rules live in `scripts/herdr-subagent/rules/<role>.md` (the role is the
+  template name up to its last `-`), and `start` sends them ahead of your
+  task, after a blank line and a `Task:` heading; a role with no rules file
+  gets the task alone. hc adds the report-back target. The template must be
+  listed by `hc templates`, which means a file at
+  `~/.config/herdr-core/templates/<name>.md`. Copy or link the shipped ones
+  (only `templates/`; `rules/` stays next to the script):
 
   ```sh
   mkdir -p ~/.config/herdr-core/templates
   ln -s "$PWD"/scripts/herdr-subagent/templates/*.md ~/.config/herdr-core/templates/
   ```
 
-  `implementer` runs Claude Code with `hc send` and `hc label` pre-allowed.
+  `implementer-claude` runs Claude Code with `hc send` and `hc label` pre-allowed.
   `implementer-codex` runs Codex in its workspace-write sandbox with network
   access on: from inside that sandbox `hc` can't reach its core otherwise,
   and the child needs both `hc send` and `hc label`. A narrower alternative,
