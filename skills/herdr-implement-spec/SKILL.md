@@ -17,7 +17,7 @@ Start every subagent with a fresh context window.
 
 Communication to and from subagents should be sparse. Communicate primarily through **context pointers**: to the spec, tickets, research notes, and previous commits. Don't duplicate information already available via pointers.
 
-**Implementer subagents** are **Herdr subagents**, launched with `herdr-subagent run` (see `herdr-subagent help run`). `herdr-subagent` is the script at `../../scripts/herdr-subagent/herdr-subagent.sh`, relative to this skill's directory; call it by that path, not from `PATH`. Each one runs in the background in its own terminal, so launch as many as the **frontier** allows for maximum concurrency. Wait on one with `hc wait <terminal>`; it reports back with `hc send` when done or stuck.
+**Implementer subagents** are **Herdr subagents**: call the Skill tool with `dispatching-herdr-subagents` before launching any. They run in the background, so launch as many as the **frontier** allows for maximum concurrency.
 
 ## Steps
 
@@ -25,9 +25,9 @@ Communication to and from subagents should be sparse. Communicate primarily thro
 
 2. (optional) Use an **exploration subagent** to conduct any exploration required by the tickets - relevant codebase files or external documentation. Ensure the exploration subagent can save files - it should save its markdown notes in a directory outside the repo, accessible by all future subagents. This lets **implementer subagents** focus on implementation rather than exploration.
 
-3. Create the integration branch and check it out in a clean worktree: `herdr-subagent` merges `origin/main` into it before each launch, and aborts if it is checked out nowhere or has uncommitted changes. If the issue tracker closes work through PRs, or the user asks for one, open a draft PR after the first merge in step 5 (a branch with no commits ahead of main can't open one), marked as closing the spec and tickets.
+3. Create the integration branch and check it out in a clean worktree: each launch first merges `origin/main` into it, and aborts if it is checked out nowhere or has uncommitted changes. If the issue tracker closes work through PRs, or the user asks for one, open a draft PR after the first merge in step 5 (a branch with no commits ahead of main can't open one), marked as closing the spec and tickets.
 
-4. Launch a fresh **implementer subagent** for each ticket with `herdr-subagent run --base <integration-branch> --branch <ticket-branch> -- "<task>"`, which gives it its own worktree on its own branch. Keep the terminal id it prints. Each implementer subagent:
+4. Launch a fresh **implementer subagent** for each ticket, with the integration branch as its base and its own ticket branch. Each implementer subagent:
    - confirms its worktree is based on the integration branch before starting, and resets onto it if not;
    - calls the Skill tool with `tdd` to build the ticket;
    - merges the integration branch tip into its own branch before reporting done
@@ -40,4 +40,4 @@ Communication to and from subagents should be sparse. Communicate primarily thro
 
 8. If a draft PR exists, mark it ready for review. Otherwise, resolve each ticket the way the issue tracker closes work, and report the integration branch.
 
-9. Clean up all **implementer subagent** terminals (`hc kill`), worktrees and branches.
+9. Clean up all **implementer subagent** terminals, worktrees and branches.
