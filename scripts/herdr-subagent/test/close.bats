@@ -105,7 +105,7 @@ has_branch() {
 	git remote remove origin
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":false,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"could not check the merge: no origin remote"}' ]
+	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":false,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"could not check the merge: no origin remote (base unknown, checked against main)"}' ]
 	has_branch b
 }
 
@@ -137,7 +137,7 @@ has_branch() {
 	no_terminal
 	run --separate-stderr "$SCRIPT" close b
 	[ "$status" -eq 0 ]
-	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":false,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"not merged into origin/main; pushed to origin/b"}' ]
+	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":false,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"not merged into origin/main; pushed to origin/b (base unknown, checked against main)"}' ]
 	[ ! -e "$HC_LOG/kill-calls" ]
 	[ ! -e "$HC_LOG/rm-calls" ]
 
@@ -146,6 +146,15 @@ has_branch() {
 	run --separate-stderr "$SCRIPT" close c
 	[ "$status" -eq 0 ]
 	[ "$output" = '{"branch":"c","worktree":"'"$REPO"'/.worktrees/c","terminal_killed":false,"worktree_removed":true,"branch_deleted":true,"branch_kept_reason":null}' ]
+}
+
+@test "a terminal without a base label: the kept reason says main was a fallback" {
+	make_worktree b
+	git push -q origin b
+	with_terminal live -
+	run --separate-stderr "$SCRIPT" close b
+	[ "$status" -eq 0 ]
+	[ "$output" = '{"branch":"b","worktree":"'"$REPO"'/.worktrees/b","terminal_killed":true,"worktree_removed":true,"branch_deleted":false,"branch_kept_reason":"not merged into origin/main; pushed to origin/b (base unknown, checked against main)"}' ]
 }
 
 @test "uncommitted or untracked changes exit 3 and touch nothing" {

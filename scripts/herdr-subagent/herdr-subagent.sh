@@ -123,6 +123,8 @@ branch is deleted, else one of:
   not merged into origin/<base>; not pushed (its tip is not on origin)
   could not check the merge: <fetch error>
   no local branch <branch>
+When no subagent.base label is left, the first three end in
+" (base unknown, checked against main)".
 stderr carries only progress, errors, leftovers after a failure and one
 final "started" or "closed" line.
 
@@ -784,8 +786,12 @@ cmd_close() {
 	done <<EOF
 $terminals
 EOF
-	# With no terminal record left, the base falls back to main.
-	[ -n "$base" ] || base="main"
+	# With no base label left, the base falls back to main, and says so.
+	local fallback=""
+	if [ -z "$base" ]; then
+		base="main"
+		fallback=" (base unknown, checked against main)"
+	fi
 
 	# A local branch alone is still work to finish: a rerun after a failed
 	# delete finds no worktree and maybe no terminal.
@@ -829,6 +835,10 @@ EOF
 	if [ -z "$KEPT" ]; then
 		deleted=true
 	else
+		case "$KEPT" in
+		"no local branch "*) ;;
+		*) KEPT="$KEPT$fallback" ;;
+		esac
 		kept_json="$(json_str "$KEPT")"
 	fi
 
