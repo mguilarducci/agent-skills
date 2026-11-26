@@ -93,8 +93,8 @@ setup() {
 @test "help start documents exit 5" {
 	run --separate-stderr "$SCRIPT" help start
 	[ "$status" -eq 0 ]
-	[[ "$output" =~ 5\ +branch,\ worktree\ path\ or\ hc\ name\ already\ exists ]] || false
-	[[ "$output" == *"pick another name and retry"* ]] || false
+	[[ "$output" =~ 5\ +branch,\ worktree\ path\ or\ live\ hc ]] || false
+	[[ "$output" == *"pick another --branch and retry"* ]] || false
 }
 
 @test "a failing hc ls exits 4 and creates nothing" {

@@ -12,7 +12,9 @@ mise trust && mise install
 
 ## herdr-subagent
 
-Launches a Herdr subagent from an `hc` template, in a new worktree on a new branch.
+Starts a Herdr subagent from an `hc` template, in a new worktree on a new
+branch (`start`), and cleans it up once its work is merged (`close`).
+`herdr-subagent --help` is the full reference, with tips for the parent agent.
 
 ### Install
 
@@ -25,12 +27,14 @@ ln -s "$PWD/scripts/herdr-subagent/herdr-subagent.sh" ~/.local/bin/herdr-subagen
 Run it from a Herdr terminal, inside a git repo:
 
 ```sh
-t=$(herdr-subagent start --branch feat/login <<'EOF' | jq -r .terminal
-Add OAuth login.
+herdr-subagent start --branch feat/login <<'EOF'
+Add OAuth login. Push the branch and open a PR against main.
 EOF
-)
-hc wait "$t"
+hc wait --children any        # returns on the next report, block or exit
+herdr-subagent close feat/login   # once the PR is merged
 ```
+
+### start
 
 - `--branch <name>` (required): the new branch. The worktree goes to
   `<main-checkout-root>/.worktrees/<slug(branch)>`.
@@ -49,8 +53,11 @@ hc wait "$t"
   ln -s "$PWD"/scripts/herdr-subagent/templates/*.md ~/.config/herdr-core/templates/
   ```
 
-  `implementer` runs Claude Code and `implementer-codex` runs Codex. A
-  missing template exits 4 and creates nothing.
+  `implementer` runs Claude Code with `hc send` and `hc label` pre-allowed.
+  `implementer-codex` runs Codex in its workspace-write sandbox with network
+  access on: from inside that sandbox `hc` can't reach its core otherwise,
+  and the child needs both `hc send` and `hc label`. A missing template
+  exits 4 and creates nothing.
 - `--parent <t>`: the live hc terminal that gets the reports (default
   `$HC_TERMINAL_ID`). Run it from an hc terminal, under `hc run --bg`, or pass
   `--parent`; without a live parent, `start` exits 4 and creates nothing.
@@ -78,22 +85,37 @@ hc wait "$t"
 - An existing branch, worktree path or live hc name is never reused: `start`
   exits 5 before creating anything. Pick another name and retry.
 
+### close
+
+`herdr-subagent close <branch>` takes no flags. It finds the terminal by its
+`subagent.repo` and `subagent.branch` labels (a finished one too), kills and
+removes it, and removes the worktree. A worktree with uncommitted or untracked
+changes exits 3 and touches nothing. It then fetches the base (the terminal's
+`subagent.base` label, else `main`) and deletes the local branch only when its
+tip is an ancestor of `origin/<base>`, as a merge commit leaves it. Otherwise
+the branch is kept and the reason reported; a failed fetch keeps it too. There
+is no `--force`, and rerunning `close` after a partial failure finishes the
+cleanup. The branch checked out in the main checkout is refused (exit 2).
+
+stdout is one JSON line,
+`{"branch","worktree","terminal_killed","worktree_removed","branch_deleted","branch_kept_reason"}`.
+`worktree` is `null` when none was found, `terminal_killed` is also true when
+a finished terminal was only removed, and `branch_kept_reason` is `null` once
+the branch is deleted.
+
 ### Exit codes
 
-- `0`: launched.
-- `1`: git or hc failed after work started; the leftovers (worktree, branch)
-  are printed with the commands to remove them.
-- `2`: usage error, including a TTY or empty stdin.
-- `3`: no `origin`, a failed fetch, or the base missing on `origin`.
-- `4`: missing git repo, `hc` (or a failing `hc ls` or `hc templates`), the
-  template, or a live parent.
-- `5`: the branch, worktree path or hc name already exists. Pick another name
-  and retry.
-- `6`: started, but hc didn't deliver the task (`task_sent: false`, for
-  example a trust dialog). The terminal and worktree are kept: read its
-  screen, then send the task yourself.
-- `130`: interrupted.
+| code | `start` | `close` |
+|---|---|---|
+| 0 | started, task sent | closed (the branch may be kept; see the JSON) |
+| 1 | git or hc failed after work started; leftovers are printed with the commands to remove them | git or hc failed midway; close again to finish |
+| 2 | usage error, including a bad label or a TTY or empty stdin | usage error, including the main checkout's branch |
+| 3 | no `origin`, a failed fetch, or the base missing on `origin` | dirty worktree; nothing touched |
+| 4 | missing git repo, `hc` (or a failing `hc ls` or `hc templates`), the template, or a live parent | missing git repo or `hc` |
+| 5 | the branch, worktree path or live hc name already exists; pick another branch | no worktree and no labelled terminal for that branch |
+| 6 | started, but hc didn't deliver the task (`task_sent: false`, for example a trust dialog); the terminal and worktree are kept: read its screen, then send the task yourself | - |
+| 130 | interrupted | interrupted |
 
-After exits 2 to 5, nothing was created.
+After `start` exits 2 to 5, nothing was created.
 
-See `herdr-subagent help start` for every flag.
+See `herdr-subagent --help` for every flag and the tips for agents.
