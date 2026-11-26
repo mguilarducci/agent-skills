@@ -20,9 +20,13 @@ _Avoid_: Agent type, CLI, model
 A Herdr subagent whose harness differs from the parent's harness. It is always launched through `hc`.
 
 **Base branch**:
-The branch a Herdr subagent's worktree is created from; `main` unless another is given.
-_Avoid_: Source branch, parent branch
+The branch on `origin` a Herdr subagent's worktree is created from; `main` unless another is given. `start` fetches it and branches from `origin/<base>`; local branches are never written.
+_Avoid_: Source branch, parent branch, Base update (the v1 step that rewrote the local base branch; retired)
 
-**Base update**:
-Bringing the base branch up to date with `origin/main` before a Herdr subagent's worktree is created from it: `main` is fast-forwarded to `origin/main`, and any other base branch gets `origin/main` merged in.
-_Avoid_: Sync, refresh, step 0
+**Template**:
+An `hc` template a Herdr subagent is started from: a frontmatter-only Markdown file named `<role>-<harness>`, whose `command` sets the Harness, model, effort and permissions. The role's fixed rules are not in it: they live in `scripts/herdr-subagent/rules/<role>.md` and are sent with the task. A different setup is a different Template.
+_Avoid_: Preset, profile, harness config
+
+**Close**:
+Cleaning up a Herdr subagent: kill and remove its terminal, remove its worktree when it is clean, and delete its branch only once merged into `origin/<base>`. Unmerged work is always kept.
+_Avoid_: Cleanup, teardown, kill (that ends only the terminal's program)
