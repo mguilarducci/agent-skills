@@ -3,32 +3,36 @@ name: dispatching-herdr-subagents
 description: "How to launch and supervise a Herdr subagent. Use when dispatching or supervising a Herdr subagent."
 ---
 
-Always launch a Herdr subagent with `herdr-subagent run`. Never use `hc run`, `git worktree add` or the native Agent tool for it.
+Always start and close a Herdr subagent with `herdr-subagent`. Never use `hc run`, `git worktree add` or the native Agent tool for it.
 
 `herdr-subagent` is the script at `../../scripts/herdr-subagent/herdr-subagent.sh`, relative to this skill's directory; call it by that path.
 
-## Launch
+## Start
 
 ```sh
-t=$(herdr-subagent run --branch <new-branch> --base <base-branch> -- "<task>")
+herdr-subagent start --branch <new-branch> --base <base-branch> <<'EOF'
+<task: the issue, the files, how to verify, where to open the PR>
+EOF
 ```
 
-- Long or multi-line task: `--task-file -` with a heredoc instead of `-- "<task>"`.
-- Pick the agent: `--harness claude|codex`, `--model <s>`, `--effort <s>`.
-- `--json` for machine-readable output; `--dry-run` to see the plan first.
+- The branch is created from `origin/<base>`, so push the base first.
+- Pick the agent with `--template implementer-claude|implementer-codex`.
+- Keep the `terminal` from the JSON it prints.
 
 ## Wait
 
-- One: `hc wait "$t"`
-- Several: `hc wait --children any` (next one) or `hc wait --children all`.
+`hc wait --children any`: returns on a child's next report, block, error or exit.
 
 ## Inspect and talk
 
-- `hc read "$t" --lines 200` to see what it did.
-- `hc send "$t" "<message>"` to answer or redirect it.
+- `hc read <t>` to see its screen.
+- `hc send <t> "<message>"` to answer or redirect it.
+- `hc keys <t> enter` to clear a dialog it is stuck on.
 
-## Clean up
+Treat a report as claims: check the worktree (`git log`, `git diff`, the tests) before relying on it.
 
-`hc kill "$t"`, then `git worktree remove <worktree>` and `git branch -D <branch>`.
+## Close
 
-For everything else, run `herdr-subagent help run` or `hc <command> --help`.
+`herdr-subagent close <branch>` once its work is merged into `origin/<base>`.
+
+For everything else, run `herdr-subagent --help`.
