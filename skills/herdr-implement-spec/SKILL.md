@@ -9,7 +9,7 @@ You have been provided a spec. This spec should have tickets associated with it,
 
 The issue tracker should have been provided to you. If not, tell the user to run `/setup-matt-pocock-skills`.
 
-The goal is the entire spec implemented as one **stack** of pull requests made with `gh stack` (the `github/gh-stack` extension): one PR per ticket, each stacked on the one before it, with the **flow branch** `flow/<name>` at the bottom of the stack. Use `gh stack` for every stack operation; never `gh pr create` or `gh pr merge` for a stacked PR.
+The goal is the entire spec implemented as one **stack** of pull requests made with `gh stack` (the `github/gh-stack` extension): one PR per ticket, each stacked on the one before it, with the **flow branch** `flow/<name>` at the bottom of the stack. Use `gh stack` for every stack operation; never `gh pr create` for a stacked PR. Nobody merges anything: neither you nor any subagent merges a branch or a PR. The work ends with the stack built.
 
 The tickets are not a list of steps. They are a **task graph** with blocking relationships between them. This means there is always a **frontier** of tickets which are ready to be grabbed.
 
@@ -25,7 +25,7 @@ Communication to and from subagents should be sparse. Communicate primarily thro
 
 2. (optional) Use an **exploration subagent** to conduct any exploration required by the tickets - relevant codebase files or external documentation. Ensure the exploration subagent can save files - it should save its markdown notes in a directory outside the repo, accessible by all future subagents. This lets **implementer subagents** focus on implementation rather than exploration.
 
-3. Create the flow branch `flow/<name>` from the default branch and push it. It is the base of the stack: every PR in the stack ends up merging into it. Keep a list of the stack, bottom to top, as `<PR number> <branch>` pairs; it starts empty, and its top is `flow/<name>`.
+3. Create the flow branch `flow/<name>` from the default branch and push it. It is the base of the stack: the bottom PR is based on it. Keep a list of the stack, bottom to top, as `<PR number> <branch>` pairs; it starts empty, and its top is `flow/<name>`.
 
 4. Launch a fresh **implementer subagent** for each ticket, with its own ticket branch and the current top of the stack as its base (`flow/<name>` while the stack is empty). Each implementer subagent:
    - confirms its worktree is based on that branch before starting, and resets onto it if not;
@@ -44,6 +44,6 @@ Communication to and from subagents should be sparse. Communicate primarily thro
 
 7. Once all tickets are stacked, call the Skill tool with `code-review` on the top of the stack against `flow/<name>`. Fix all issues raised by the code review in a single fresh **implementer subagent**, which stacks its PR on top like the others.
 
-8. Mark every PR in the stack ready for review (`gh pr ready <number>`). Resolve each ticket the way the issue tracker closes work, pointing to its PR, and report the stack (`gh stack view`) and the flow branch. Don't merge the stack: the user does, bottom up, with `gh stack merge`.
+8. Mark every PR in the stack ready for review (`gh pr ready <number>`). Resolve each ticket the way the issue tracker closes work, pointing to its PR, and report the stack (`gh stack view`) and the flow branch.
 
-9. Close all **implementer subagents** (`herdr-subagent close`): this clears their terminals and worktrees, and keeps their branches, which are the PRs' heads until the stack merges.
+9. Close all **implementer subagents** (`herdr-subagent close`): this clears their terminals and worktrees, and keeps their branches, which are the PRs' heads.
