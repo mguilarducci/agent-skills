@@ -33,6 +33,6 @@ Treat a report as claims: check the worktree (`git log`, `git diff`, the tests) 
 
 ## Close
 
-`herdr-subagent close <branch>` once its work is merged into `origin/<base>`.
+`herdr-subagent close <branch>` once its work is done: merged into `origin/<base>`, or pushed with its PR open. Unmerged branches are kept.
 
 For everything else, run `herdr-subagent --help`.
