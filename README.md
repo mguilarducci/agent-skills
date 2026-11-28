@@ -132,3 +132,25 @@ terminal's hc record is removed (a live one is killed first), and
 After `start` exits 2 to 5, nothing was created.
 
 See `herdr-subagent --help` for every flag and the tips for agents.
+
+## hc-worktree
+
+For people, not agents: `hc-worktree <branch>` does what herdr-app's
+**New worktree** dialog does, from the shell. It follows the shipped
+`worktree` mod step by step:
+
+- The checkout goes to `<worktrees.directory>/<repo>/<slug(branch)>`
+  (`worktrees.directory` from herdr-app's `settings.json`, default
+  `~/.herdr/worktrees`; `<repo>` is the main checkout's folder name).
+- An existing local branch is checked out; a new one starts from the current
+  `HEAD`, not `main`.
+- herdr-app then opens an unnamed space there, so it nests under the repo in
+  the sidebar. `--no-focus` creates it without switching to it.
+
+```sh
+ln -s "$PWD/scripts/hc-worktree/hc-worktree.sh" ~/.local/bin/hc-worktree
+hc-worktree feat/login
+```
+
+Needs `git`, `perl` and a running herdr-app. `hc-worktree --help` has the
+exit codes.
